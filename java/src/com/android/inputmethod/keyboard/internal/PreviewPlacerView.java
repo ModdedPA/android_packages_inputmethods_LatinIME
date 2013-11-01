@@ -24,8 +24,8 @@ import android.graphics.PorterDuffXfermode;
 import android.util.AttributeSet;
 import android.widget.RelativeLayout;
 
-import com.android.inputmethod.latin.CollectionUtils;
-import com.android.inputmethod.latin.CoordinateUtils;
+import com.android.inputmethod.latin.utils.CollectionUtils;
+import com.android.inputmethod.latin.utils.CoordinateUtils;
 
 import java.util.ArrayList;
 
@@ -37,7 +37,10 @@ public final class PreviewPlacerView extends RelativeLayout {
     public PreviewPlacerView(final Context context, final AttributeSet attrs) {
         super(context, attrs);
         setWillNotDraw(false);
+    }
 
+    public void setHardwareAcceleratedDrawingEnabled(final boolean enabled) {
+        if (!enabled) return;
         final Paint layerPaint = new Paint();
         layerPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.SRC_OVER));
         setLayerType(LAYER_TYPE_HARDWARE, layerPaint);

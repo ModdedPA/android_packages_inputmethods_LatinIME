@@ -22,21 +22,46 @@
 
 #include "defines.h"
 #include "jni.h"
-#include "multi_bigram_map.h"
-#include "proximity_info_state.h"
 #include "suggest/core/dicnode/dic_nodes_cache.h"
+#include "suggest/core/dictionary/multi_bigram_map.h"
+#include "suggest/core/layout/proximity_info_state.h"
 
 namespace latinime {
 
 class Dictionary;
+class DictionaryStructureWithBufferPolicy;
 class ProximityInfo;
+class SuggestOptions;
 
 class DicTraverseSession {
  public:
-    AK_FORCE_INLINE DicTraverseSession(JNIEnv *env, jstring localeStr)
-            : mPrevWordPos(NOT_VALID_WORD), mProximityInfo(0),
-              mDictionary(0), mDicNodesCache(), mMultiBigramMap(),
-              mInputSize(0), mPartiallyCommited(false), mMaxPointerCount(1),
+
+    // A factory method for DicTraverseSession
+    static AK_FORCE_INLINE void *getSessionInstance(JNIEnv *env, jstring localeStr,
+            jlong dictSize) {
+        // To deal with the trade-off between accuracy and memory space, large cache is used for
+        // dictionaries larger that the threshold
+        return new DicTraverseSession(env, localeStr,
+                dictSize >= DICTIONARY_SIZE_THRESHOLD_TO_USE_LARGE_CACHE_FOR_SUGGESTION);
+    }
+
+    static AK_FORCE_INLINE void initSessionInstance(DicTraverseSession *traverseSession,
+            const Dictionary *const dictionary, const int *prevWord, const int prevWordLength,
+            const SuggestOptions *const suggestOptions) {
+        if (traverseSession) {
+            DicTraverseSession *tSession = static_cast<DicTraverseSession *>(traverseSession);
+            tSession->init(dictionary, prevWord, prevWordLength, suggestOptions);
+        }
+    }
+
+    static AK_FORCE_INLINE void releaseSessionInstance(DicTraverseSession *traverseSession) {
+        delete traverseSession;
+    }
+
+    AK_FORCE_INLINE DicTraverseSession(JNIEnv *env, jstring localeStr, bool usesLargeCache)
+            : mPrevWordPos(NOT_A_DICT_POS), mProximityInfo(0),
+              mDictionary(0), mSuggestOptions(0), mDicNodesCache(usesLargeCache),
+              mMultiBigramMap(), mInputSize(0), mPartiallyCommited(false), mMaxPointerCount(1),
               mMultiWordCostMultiplier(1.0f) {
         // NOTE: mProximityInfoStates is an array of instances.
         // No need to initialize it explicitly here.
@@ -45,22 +70,22 @@ class DicTraverseSession {
     // Non virtual inline destructor -- never inherit this class
     AK_FORCE_INLINE ~DicTraverseSession() {}
 
-    void init(const Dictionary *dictionary, const int *prevWord, int prevWordLength);
+    void init(const Dictionary *dictionary, const int *prevWord, int prevWordLength,
+            const SuggestOptions *const suggestOptions);
     // TODO: Remove and merge into init
     void setupForGetSuggestions(const ProximityInfo *pInfo, const int *inputCodePoints,
             const int inputSize, const int *const inputXs, const int *const inputYs,
             const int *const times, const int *const pointerIds, const float maxSpatialDistance,
             const int maxPointerCount);
-    void resetCache(const int nextActiveCacheSize, const int maxWords);
+    void resetCache(const int thresholdForNextActiveDicNodes, const int maxWords);
 
-    // TODO: Remove
-    const uint8_t *getOffsetDict() const;
-    int getDictFlags() const;
+    const DictionaryStructureWithBufferPolicy *getDictionaryStructurePolicy() const;
 
     //--------------------
     // getters and setters
     //--------------------
     const ProximityInfo *getProximityInfo() const { return mProximityInfo; }
+    const SuggestOptions *getSuggestOptions() const { return mSuggestOptions; }
     int getPrevWordPos() const { return mPrevWordPos; }
     // TODO: REMOVE
     void setPrevWordPos(int pos) { mPrevWordPos = pos; }
@@ -88,7 +113,9 @@ class DicTraverseSession {
         if (usedPointerCount != 1) {
             return false;
         }
-        *pointerId = usedPointerId;
+        if (pointerId) {
+            *pointerId = usedPointerId;
+        }
         return true;
     }
 
@@ -160,6 +187,7 @@ class DicTraverseSession {
     DISALLOW_IMPLICIT_CONSTRUCTORS(DicTraverseSession);
     // threshold to start caching
     static const int CACHE_START_INPUT_LENGTH_THRESHOLD;
+    static const int DICTIONARY_SIZE_THRESHOLD_TO_USE_LARGE_CACHE_FOR_SUGGESTION;
     void initializeProximityInfoStates(const int *const inputCodePoints, const int *const inputXs,
             const int *const inputYs, const int *const times, const int *const pointerIds,
             const int inputSize, const float maxSpatialDistance, const int maxPointerCount);
@@ -167,6 +195,7 @@ class DicTraverseSession {
     int mPrevWordPos;
     const ProximityInfo *mProximityInfo;
     const Dictionary *mDictionary;
+    const SuggestOptions *mSuggestOptions;
 
     DicNodesCache mDicNodesCache;
     // Temporary cache for bigram frequencies

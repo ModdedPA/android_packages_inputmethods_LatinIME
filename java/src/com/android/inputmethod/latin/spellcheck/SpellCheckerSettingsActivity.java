@@ -16,6 +16,8 @@
 
 package com.android.inputmethod.latin.spellcheck;
 
+import com.android.inputmethod.latin.utils.FragmentUtils;
+
 import android.content.Intent;
 import android.os.Bundle;
 import android.preference.PreferenceActivity;
@@ -24,6 +26,8 @@ import android.preference.PreferenceActivity;
  * Spell checker preference screen.
  */
 public final class SpellCheckerSettingsActivity extends PreferenceActivity {
+    private static final String DEFAULT_FRAGMENT = SpellCheckerSettingsFragment.class.getName();
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -32,8 +36,14 @@ public final class SpellCheckerSettingsActivity extends PreferenceActivity {
     @Override
     public Intent getIntent() {
         final Intent modIntent = new Intent(super.getIntent());
-        modIntent.putExtra(EXTRA_SHOW_FRAGMENT, SpellCheckerSettingsFragment.class.getName());
+        modIntent.putExtra(EXTRA_SHOW_FRAGMENT, DEFAULT_FRAGMENT);
         modIntent.putExtra(EXTRA_NO_HEADERS, true);
         return modIntent;
+    }
+
+    // TODO: Uncomment the override annotation once we start using SDK version 19.
+    // @Override
+    public boolean isValidFragment(String fragmentName) {
+        return FragmentUtils.isValidFragment(fragmentName);
     }
 }

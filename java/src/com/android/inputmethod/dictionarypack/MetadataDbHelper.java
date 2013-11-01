@@ -25,6 +25,7 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.inputmethod.latin.R;
+import com.android.inputmethod.latin.utils.DebugLogUtils;
 
 import java.io.File;
 import java.util.ArrayList;
@@ -36,8 +37,6 @@ import java.util.TreeMap;
  * Various helper functions for the state database
  */
 public class MetadataDbHelper extends SQLiteOpenHelper {
-
-    @SuppressWarnings("unused")
     private static final String TAG = MetadataDbHelper.class.getSimpleName();
 
     // This was the initial release version of the database. It should never be
@@ -200,6 +199,7 @@ public class MetadataDbHelper extends SQLiteOpenHelper {
             final ContentValues defaultMetadataValues = new ContentValues();
             defaultMetadataValues.put(CLIENT_CLIENT_ID_COLUMN, "");
             defaultMetadataValues.put(CLIENT_METADATA_URI_COLUMN, defaultMetadataUri);
+            defaultMetadataValues.put(CLIENT_PENDINGID_COLUMN, UpdateHandler.NOT_AN_ID);
             db.insert(CLIENT_TABLE_NAME, null, defaultMetadataValues);
         }
     }
@@ -359,21 +359,21 @@ public class MetadataDbHelper extends SQLiteOpenHelper {
     }
 
     /**
-     * Get the metadata download ID for a client ID.
+     * Get the metadata download ID for a metadata URI.
      *
-     * This will retrieve the download ID for the metadata file associated with a client ID.
-     * If there is no metadata download in progress for this client, it will return NOT_AN_ID.
+     * This will retrieve the download ID for the metadata file that has the passed URI.
+     * If this URI is not being downloaded right now, it will return NOT_AN_ID.
      *
      * @param context a context instance to open the database on
-     * @param clientId the client ID to retrieve the metadata download ID of
+     * @param uri the URI to retrieve the metadata download ID of
      * @return the metadata download ID, or NOT_AN_ID if no download is in progress
      */
-    public static long getMetadataDownloadIdForClient(final Context context,
-            final String clientId) {
+    public static long getMetadataDownloadIdForURI(final Context context,
+            final String uri) {
         SQLiteDatabase defaultDb = getDb(context, null);
         final Cursor cursor = defaultDb.query(CLIENT_TABLE_NAME,
                 new String[] { CLIENT_PENDINGID_COLUMN },
-                CLIENT_CLIENT_ID_COLUMN + " = ?", new String[] { clientId },
+                CLIENT_METADATA_URI_COLUMN + " = ?", new String[] { uri },
                 null, null, null, null);
         try {
             if (!cursor.moveToFirst()) return UpdateHandler.NOT_AN_ID;
@@ -437,37 +437,37 @@ public class MetadataDbHelper extends SQLiteOpenHelper {
      */
     public static ContentValues completeWithDefaultValues(final ContentValues result)
             throws BadFormatException {
-        if (!result.containsKey(WORDLISTID_COLUMN) || !result.containsKey(LOCALE_COLUMN)) {
+        if (null == result.get(WORDLISTID_COLUMN) || null == result.get(LOCALE_COLUMN)) {
             throw new BadFormatException();
         }
         // 0 for the pending id, because there is none
-        if (!result.containsKey(PENDINGID_COLUMN)) result.put(PENDINGID_COLUMN, 0);
+        if (null == result.get(PENDINGID_COLUMN)) result.put(PENDINGID_COLUMN, 0);
         // This is a binary blob of a dictionary
-        if (!result.containsKey(TYPE_COLUMN)) result.put(TYPE_COLUMN, TYPE_BULK);
+        if (null == result.get(TYPE_COLUMN)) result.put(TYPE_COLUMN, TYPE_BULK);
         // This word list is unknown, but it's present, else we wouldn't be here, so INSTALLED
-        if (!result.containsKey(STATUS_COLUMN)) result.put(STATUS_COLUMN, STATUS_INSTALLED);
+        if (null == result.get(STATUS_COLUMN)) result.put(STATUS_COLUMN, STATUS_INSTALLED);
         // No description unless specified, because we can't guess it
-        if (!result.containsKey(DESCRIPTION_COLUMN)) result.put(DESCRIPTION_COLUMN, "");
+        if (null == result.get(DESCRIPTION_COLUMN)) result.put(DESCRIPTION_COLUMN, "");
         // File name - this is an asset, so it works as an already deleted file.
         //     hence, we need to supply a non-existent file name. Anything will
         //     do as long as it returns false when tested with File#exist(), and
         //     the empty string does not, so it's set to "_".
-        if (!result.containsKey(LOCAL_FILENAME_COLUMN)) result.put(LOCAL_FILENAME_COLUMN, "_");
+        if (null == result.get(LOCAL_FILENAME_COLUMN)) result.put(LOCAL_FILENAME_COLUMN, "_");
         // No remote file name : this can't be downloaded. Unless specified.
-        if (!result.containsKey(REMOTE_FILENAME_COLUMN)) result.put(REMOTE_FILENAME_COLUMN, "");
+        if (null == result.get(REMOTE_FILENAME_COLUMN)) result.put(REMOTE_FILENAME_COLUMN, "");
         // 0 for the update date : 1970/1/1. Unless specified.
-        if (!result.containsKey(DATE_COLUMN)) result.put(DATE_COLUMN, 0);
+        if (null == result.get(DATE_COLUMN)) result.put(DATE_COLUMN, 0);
         // Checksum unknown unless specified
-        if (!result.containsKey(CHECKSUM_COLUMN)) result.put(CHECKSUM_COLUMN, "");
+        if (null == result.get(CHECKSUM_COLUMN)) result.put(CHECKSUM_COLUMN, "");
         // No filesize unless specified
-        if (!result.containsKey(FILESIZE_COLUMN)) result.put(FILESIZE_COLUMN, 0);
+        if (null == result.get(FILESIZE_COLUMN)) result.put(FILESIZE_COLUMN, 0);
         // Smallest possible version unless specified
-        if (!result.containsKey(VERSION_COLUMN)) result.put(VERSION_COLUMN, 1);
+        if (null == result.get(VERSION_COLUMN)) result.put(VERSION_COLUMN, 1);
         // Assume current format unless specified
-        if (!result.containsKey(FORMATVERSION_COLUMN))
+        if (null == result.get(FORMATVERSION_COLUMN))
             result.put(FORMATVERSION_COLUMN, UpdateHandler.MAXIMUM_SUPPORTED_FORMAT_VERSION);
         // No flags unless specified
-        if (!result.containsKey(FLAGS_COLUMN)) result.put(FLAGS_COLUMN, 0);
+        if (null == result.get(FLAGS_COLUMN)) result.put(FLAGS_COLUMN, 0);
         return result;
     }
 
@@ -572,7 +572,8 @@ public class MetadataDbHelper extends SQLiteOpenHelper {
      * If several clients use the same metadata URL, we know to only download it once, and
      * dispatch the update process across all relevant clients when the download ends. This means
      * several clients may share a single download ID if they share a metadata URI.
-     * The dispatching is done in {@link UpdateHandler#downloadFinished(Context, Intent)}, which
+     * The dispatching is done in
+     * {@link UpdateHandler#downloadFinished(Context, android.content.Intent)}, which
      * finds out about the list of relevant clients by calling this method.
      *
      * @param context a context instance to open the databases
@@ -773,15 +774,17 @@ public class MetadataDbHelper extends SQLiteOpenHelper {
         if (TextUtils.isEmpty(valuesClientId) || null == valuesMetadataUri
                 || null == valuesMetadataAdditionalId) {
             // We need all these columns to be filled in
-            Utils.l("Missing parameter for updateClientInfo");
+            DebugLogUtils.l("Missing parameter for updateClientInfo");
             return;
         }
         if (!clientId.equals(valuesClientId)) {
             // Mismatch! The client violates the protocol.
-            Utils.l("Received an updateClientInfo request for ", clientId, " but the values "
-                    + "contain a different ID : ", valuesClientId);
+            DebugLogUtils.l("Received an updateClientInfo request for ", clientId,
+                    " but the values " + "contain a different ID : ", valuesClientId);
             return;
         }
+        // Default value for a pending ID is NOT_AN_ID
+        values.put(CLIENT_PENDINGID_COLUMN, UpdateHandler.NOT_AN_ID);
         final SQLiteDatabase defaultDb = getDb(context, "");
         if (-1 == defaultDb.insert(CLIENT_TABLE_NAME, null, values)) {
             defaultDb.update(CLIENT_TABLE_NAME, values,
@@ -848,7 +851,7 @@ public class MetadataDbHelper extends SQLiteOpenHelper {
             final ContentValues r) {
         switch (r.getAsInteger(TYPE_COLUMN)) {
             case TYPE_BULK:
-                Utils.l("Ended processing a wordlist");
+                DebugLogUtils.l("Ended processing a wordlist");
                 // Updating a bulk word list is a three-step operation:
                 // - Add the new entry to the table
                 // - Remove the old entry from the table
@@ -863,17 +866,20 @@ public class MetadataDbHelper extends SQLiteOpenHelper {
                                 r.getAsString(WORDLISTID_COLUMN),
                                 Integer.toString(STATUS_INSTALLED) },
                         null, null, null);
-                if (c.moveToFirst()) {
-                    // There should never be more than one file, but if there are, it's a bug
-                    // and we should remove them all. I think it might happen if the power of the
-                    // phone is suddenly cut during an update.
-                    final int filenameIndex = c.getColumnIndex(LOCAL_FILENAME_COLUMN);
-                    do {
-                        Utils.l("Setting for removal", c.getString(filenameIndex));
-                        filenames.add(c.getString(filenameIndex));
-                    } while (c.moveToNext());
+                try {
+                    if (c.moveToFirst()) {
+                        // There should never be more than one file, but if there are, it's a bug
+                        // and we should remove them all. I think it might happen if the power of
+                        // the phone is suddenly cut during an update.
+                        final int filenameIndex = c.getColumnIndex(LOCAL_FILENAME_COLUMN);
+                        do {
+                            DebugLogUtils.l("Setting for removal", c.getString(filenameIndex));
+                            filenames.add(c.getString(filenameIndex));
+                        } while (c.moveToNext());
+                    }
+                } finally {
+                    c.close();
                 }
-
                 r.put(STATUS_COLUMN, STATUS_INSTALLED);
                 db.beginTransactionNonExclusive();
                 // Delete all old entries. There should never be any stalled entries, but if

@@ -16,21 +16,22 @@
 
 package com.android.inputmethod.latin.dicttool;
 
-import com.android.inputmethod.latin.makedict.BinaryDictInputOutput;
+import com.android.inputmethod.latin.makedict.BinaryDictDecoderUtils;
+import com.android.inputmethod.latin.makedict.DictDecoder;
+import com.android.inputmethod.latin.makedict.DictEncoder;
 import com.android.inputmethod.latin.makedict.FormatSpec;
 import com.android.inputmethod.latin.makedict.FusionDictionary;
 import com.android.inputmethod.latin.makedict.MakedictLog;
 import com.android.inputmethod.latin.makedict.UnsupportedFormatException;
+import com.android.inputmethod.latin.makedict.Ver3DictEncoder;
+import com.android.inputmethod.latin.makedict.Ver4DictEncoder;
 
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
 import java.util.Arrays;
 import java.util.LinkedList;
 
@@ -44,9 +45,9 @@ import org.xml.sax.SAXException;
 public class DictionaryMaker {
 
     static class Arguments {
-        private static final String OPTION_VERSION_1 = "-1";
         private static final String OPTION_VERSION_2 = "-2";
         private static final String OPTION_VERSION_3 = "-3";
+        private static final String OPTION_VERSION_4 = "-4";
         private static final String OPTION_INPUT_SOURCE = "-s";
         private static final String OPTION_INPUT_BIGRAM_XML = "-b";
         private static final String OPTION_INPUT_SHORTCUT_XML = "-c";
@@ -127,12 +128,12 @@ public class DictionaryMaker {
                     + "| [-s <combined format input]"
                     + "| [-s <binary input>] [-d <binary output>] [-x <xml output>] "
                     + " [-o <combined output>]"
-                    + "[-1] [-2] [-3]\n"
+                    + "[-2] [-3] [-4]\n"
                     + "\n"
                     + "  Converts a source dictionary file to one or several outputs.\n"
                     + "  Source can be an XML file, with an optional XML bigrams file, or a\n"
                     + "  binary dictionary file.\n"
-                    + "  Binary version 1 (Ice Cream Sandwich), 2 (Jelly Bean), 3, XML and\n"
+                    + "  Binary version 2 (Jelly Bean), 3, 4, XML and\n"
                     + "  combined format outputs are supported.";
         }
 
@@ -159,8 +160,8 @@ public class DictionaryMaker {
                         // Do nothing, this is the default
                     } else if (OPTION_VERSION_3.equals(arg)) {
                         outputBinaryFormatVersion = 3;
-                    } else if (OPTION_VERSION_1.equals(arg)) {
-                        outputBinaryFormatVersion = 1;
+                    } else if (OPTION_VERSION_4.equals(arg)) {
+                        outputBinaryFormatVersion = 4;
                     } else if (OPTION_HELP.equals(arg)) {
                         displayHelp();
                     } else {
@@ -176,7 +177,7 @@ public class DictionaryMaker {
                                 inputUnigramXml = filename;
                             } else if (CombinedInputOutput.isCombinedDictionary(filename)) {
                                 inputCombined = filename;
-                            } else if (BinaryDictInputOutput.isBinaryDictionary(filename)) {
+                            } else if (BinaryDictDecoderUtils.isBinaryDictionary(filename)) {
                                 inputBinary = filename;
                             } else {
                                 throw new IllegalArgumentException(
@@ -198,7 +199,7 @@ public class DictionaryMaker {
                     }
                 } else {
                     if (null == inputBinary && null == inputUnigramXml) {
-                        if (BinaryDictInputOutput.isBinaryDictionary(arg)) {
+                        if (BinaryDictDecoderUtils.isBinaryDictionary(arg)) {
                             inputBinary = arg;
                         } else if (CombinedInputOutput.isCombinedDictionary(arg)) {
                             inputCombined = arg;
@@ -265,24 +266,9 @@ public class DictionaryMaker {
      */
     private static FusionDictionary readBinaryFile(final String binaryFilename)
             throws FileNotFoundException, IOException, UnsupportedFormatException {
-        FileInputStream inStream = null;
-
-        try {
-            final File file = new File(binaryFilename);
-            inStream = new FileInputStream(file);
-            final ByteBuffer buffer = inStream.getChannel().map(
-                    FileChannel.MapMode.READ_ONLY, 0, file.length());
-            return BinaryDictInputOutput.readDictionaryBinary(
-                    new BinaryDictInputOutput.ByteBufferWrapper(buffer), null);
-        } finally {
-            if (inStream != null) {
-                try {
-                    inStream.close();
-                } catch (IOException e) {
-                    // do nothing
-                }
-            }
-        }
+        final File file = new File(binaryFilename);
+        final DictDecoder dictDecoder = FormatSpec.getDictDecoder(file);
+        return dictDecoder.readDictionaryBinary(null, false /* deleteDictIfBroken */);
     }
 
     /**
@@ -371,8 +357,13 @@ public class DictionaryMaker {
             throws FileNotFoundException, IOException, UnsupportedFormatException {
         final File outputFile = new File(outputFilename);
         final FormatSpec.FormatOptions formatOptions = new FormatSpec.FormatOptions(version);
-        BinaryDictInputOutput.writeDictionaryBinary(new FileOutputStream(outputFilename), dict,
-                formatOptions);
+        final DictEncoder dictEncoder;
+        if (version == 4) {
+            dictEncoder = new Ver4DictEncoder(outputFile);
+        } else {
+            dictEncoder = new Ver3DictEncoder(outputFile);
+        }
+        dictEncoder.writeDictionary(dict, formatOptions);
     }
 
     /**

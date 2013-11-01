@@ -24,7 +24,7 @@ import android.view.View;
 import android.widget.LinearLayout;
 
 public final class InputView extends LinearLayout {
-    private View mSuggestionStripContainer;
+    private View mSuggestionStripView;
     private View mKeyboardView;
     private int mKeyboardTopPadding;
 
@@ -33,33 +33,29 @@ public final class InputView extends LinearLayout {
     private final Rect mEventForwardingRect = new Rect();
     private final Rect mEventReceivingRect = new Rect();
 
-    public InputView(Context context, AttributeSet attrs) {
+    public InputView(final Context context, final AttributeSet attrs) {
         super(context, attrs, 0);
     }
 
-    public void setKeyboardGeometry(int keyboardTopPadding) {
+    public void setKeyboardGeometry(final int keyboardTopPadding) {
         mKeyboardTopPadding = keyboardTopPadding;
     }
 
     @Override
     protected void onFinishInflate() {
-        mSuggestionStripContainer = findViewById(R.id.suggestions_container);
+        mSuggestionStripView = findViewById(R.id.suggestion_strip_view);
         mKeyboardView = findViewById(R.id.keyboard_view);
     }
 
     @Override
-    public boolean dispatchTouchEvent(MotionEvent me) {
-        if (mSuggestionStripContainer.getVisibility() == VISIBLE
-                && mKeyboardView.getVisibility() == VISIBLE
-                && forwardTouchEvent(me)) {
-            return true;
+    public boolean dispatchTouchEvent(final MotionEvent me) {
+        if (mSuggestionStripView.getVisibility() != VISIBLE
+                || mKeyboardView.getVisibility() != VISIBLE) {
+            return super.dispatchTouchEvent(me);
         }
-        return super.dispatchTouchEvent(me);
-    }
 
-    // The touch events that hit the top padding of keyboard should be forwarded to
-    // {@link SuggestionStripView}.
-    private boolean forwardTouchEvent(MotionEvent me) {
+        // The touch events that hit the top padding of keyboard should be forwarded to
+        // {@link SuggestionStripView}.
         final Rect rect = mInputViewRect;
         this.getGlobalVisibleRect(rect);
         final int x = (int)me.getX() + rect.left;
@@ -68,7 +64,7 @@ public final class InputView extends LinearLayout {
         final Rect forwardingRect = mEventForwardingRect;
         mKeyboardView.getGlobalVisibleRect(forwardingRect);
         if (!mIsForwardingEvent && !forwardingRect.contains(x, y)) {
-            return false;
+            return super.dispatchTouchEvent(me);
         }
 
         final int forwardingLimitY = forwardingRect.top + mKeyboardTopPadding;
@@ -93,11 +89,11 @@ public final class InputView extends LinearLayout {
         }
 
         if (!sendToTarget) {
-            return false;
+            return super.dispatchTouchEvent(me);
         }
 
         final Rect receivingRect = mEventReceivingRect;
-        mSuggestionStripContainer.getGlobalVisibleRect(receivingRect);
+        mSuggestionStripView.getGlobalVisibleRect(receivingRect);
         final int translatedX = x - receivingRect.left;
         final int translatedY;
         if (y < forwardingLimitY) {
@@ -107,7 +103,7 @@ public final class InputView extends LinearLayout {
             translatedY = y - receivingRect.top;
         }
         me.setLocation(translatedX, translatedY);
-        mSuggestionStripContainer.dispatchTouchEvent(me);
+        mSuggestionStripView.dispatchTouchEvent(me);
         return true;
     }
 }

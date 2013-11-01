@@ -16,22 +16,22 @@
 
 package com.android.inputmethod.latin;
 
-import com.android.inputmethod.latin.define.ProductionFlag;
-import com.android.inputmethod.latin.makedict.BinaryDictInputOutput;
-import com.android.inputmethod.latin.makedict.FormatSpec;
-
 import android.content.Context;
 import android.content.SharedPreferences;
-import android.content.pm.PackageManager;
-import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.AssetFileDescriptor;
 import android.util.Log;
 
+import com.android.inputmethod.latin.makedict.DictDecoder;
+import com.android.inputmethod.latin.makedict.FormatSpec;
+import com.android.inputmethod.latin.makedict.FormatSpec.FileHeader;
+import com.android.inputmethod.latin.makedict.UnsupportedFormatException;
+import com.android.inputmethod.latin.utils.CollectionUtils;
+import com.android.inputmethod.latin.utils.DictionaryInfoUtils;
+import com.android.inputmethod.latin.utils.LocaleUtils;
+
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.nio.BufferUnderflowException;
-import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Locale;
@@ -39,7 +39,7 @@ import java.util.Locale;
 /**
  * Helper class to get the address of a mmap'able dictionary file.
  */
-final class BinaryDictionaryGetter {
+final public class BinaryDictionaryGetter {
 
     /**
      * Used for Log actions from this class
@@ -223,31 +223,16 @@ final class BinaryDictionaryGetter {
         }
     }
 
-    // ## HACK ## we prevent usage of a dictionary before version 18 for English only. The reason
-    // for this is, since those do not include whitelist entries, the new code with an old version
-    // of the dictionary would lose whitelist functionality.
+    // ## HACK ## we prevent usage of a dictionary before version 18. The reason for this is, since
+    // those do not include whitelist entries, the new code with an old version of the dictionary
+    // would lose whitelist functionality.
     private static boolean hackCanUseDictionaryFile(final Locale locale, final File f) {
-        // Only for English - other languages didn't have a whitelist, hence this
-        // ad-hoc ## HACK ##
-        if (!Locale.ENGLISH.getLanguage().equals(locale.getLanguage())) return true;
-
-        FileInputStream inStream = null;
         try {
             // Read the version of the file
-            inStream = new FileInputStream(f);
-            final BinaryDictInputOutput.ByteBufferWrapper buffer =
-                    new BinaryDictInputOutput.ByteBufferWrapper(inStream.getChannel().map(
-                            FileChannel.MapMode.READ_ONLY, 0, f.length()));
-            final int magic = buffer.readInt();
-            if (magic != FormatSpec.VERSION_2_MAGIC_NUMBER) {
-                return false;
-            }
-            final int formatVersion = buffer.readInt();
-            final int headerSize = buffer.readInt();
-            final HashMap<String, String> options = CollectionUtils.newHashMap();
-            BinaryDictInputOutput.populateOptions(buffer, headerSize, options);
+            final DictDecoder dictDecoder = FormatSpec.getDictDecoder(f);
+            final FileHeader header = dictDecoder.readHeader();
 
-            final String version = options.get(VERSION_KEY);
+            final String version = header.mDictionaryOptions.mAttributes.get(VERSION_KEY);
             if (null == version) {
                 // No version in the options : the format is unexpected
                 return false;
@@ -263,14 +248,8 @@ final class BinaryDictionaryGetter {
             return false;
         } catch (BufferUnderflowException e) {
             return false;
-        } finally {
-            if (inStream != null) {
-                try {
-                    inStream.close();
-                } catch (IOException e) {
-                    // do nothing
-                }
-            }
+        } catch (UnsupportedFormatException e) {
+            return false;
         }
     }
 
@@ -290,17 +269,8 @@ final class BinaryDictionaryGetter {
             final Context context) {
 
         final boolean hasDefaultWordList = DictionaryFactory.isDictionaryAvailable(context, locale);
-        // TODO: The development-only-diagnostic version is not supported by the Dictionary Pack
-        // Service yet
-        if (!ProductionFlag.USES_DEVELOPMENT_ONLY_DIAGNOSTICS) {
-            // We need internet access to do the following. Only do this if the package actually
-            // has the permission.
-            if (context.checkCallingOrSelfPermission(android.Manifest.permission.INTERNET)
-                    == PackageManager.PERMISSION_GRANTED) {
-                BinaryDictionaryFileDumper.cacheWordListsFromContentProvider(locale, context,
-                        hasDefaultWordList);
-            }
-        }
+        BinaryDictionaryFileDumper.cacheWordListsFromContentProvider(locale, context,
+                hasDefaultWordList);
         final File[] cachedWordLists = getCachedWordLists(locale.toString(), context);
         final String mainDictId = DictionaryInfoUtils.getMainDictId(locale);
         final DictPackSettings dictPackSettings = new DictPackSettings(context);
@@ -316,7 +286,8 @@ final class BinaryDictionaryGetter {
             }
             if (!dictPackSettings.isWordListActive(wordListId)) continue;
             if (canUse) {
-                fileList.add(AssetFileAddress.makeFromFileName(f.getPath()));
+                final AssetFileAddress afa = AssetFileAddress.makeFromFileName(f.getPath());
+                if (null != afa) fileList.add(afa);
             } else {
                 Log.e(TAG, "Found a cached dictionary file but cannot read or use it");
             }

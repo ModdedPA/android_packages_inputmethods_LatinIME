@@ -75,12 +75,12 @@ import java.util.Map;
 
     private static void writeJson(final Key key, final JsonWriter jsonWriter) throws IOException {
         jsonWriter.beginObject();
-        jsonWriter.name("code").value(key.mCode);
+        jsonWriter.name("code").value(key.getCode());
         jsonWriter.name("altCode").value(key.getAltCode());
-        jsonWriter.name("x").value(key.mX);
-        jsonWriter.name("y").value(key.mY);
-        jsonWriter.name("w").value(key.mWidth);
-        jsonWriter.name("h").value(key.mHeight);
+        jsonWriter.name("x").value(key.getX());
+        jsonWriter.name("y").value(key.getY());
+        jsonWriter.name("w").value(key.getWidth());
+        jsonWriter.name("h").value(key.getHeight());
         jsonWriter.endObject();
     }
 
@@ -94,12 +94,17 @@ import java.util.Map;
                 .value(words.mIsPunctuationSuggestions);
         jsonWriter.name("isObsoleteSuggestions").value(words.mIsObsoleteSuggestions);
         jsonWriter.name("isPrediction").value(words.mIsPrediction);
-        jsonWriter.name("words");
+        jsonWriter.name("suggestedWords");
         jsonWriter.beginArray();
         final int size = words.size();
         for (int j = 0; j < size; j++) {
             final SuggestedWordInfo wordInfo = words.getInfo(j);
-            jsonWriter.value(wordInfo.toString());
+            jsonWriter.beginObject();
+            jsonWriter.name("word").value(wordInfo.toString());
+            jsonWriter.name("score").value(wordInfo.mScore);
+            jsonWriter.name("kind").value(wordInfo.mKind);
+            jsonWriter.name("sourceDict").value(wordInfo.mSourceDict.mDictType);
+            jsonWriter.endObject();
         }
         jsonWriter.endArray();
         jsonWriter.endObject();

@@ -21,6 +21,10 @@ import android.content.res.AssetFileDescriptor;
 import android.content.res.Resources;
 import android.util.Log;
 
+import com.android.inputmethod.annotations.UsedForTesting;
+import com.android.inputmethod.latin.utils.CollectionUtils;
+import com.android.inputmethod.latin.utils.DictionaryInfoUtils;
+
 import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedList;
@@ -47,7 +51,7 @@ public final class DictionaryFactory {
         if (null == locale) {
             Log.e(TAG, "No locale defined for dictionary");
             return new DictionaryCollection(Dictionary.TYPE_MAIN,
-                    createBinaryDictionary(context, locale));
+                    createReadOnlyBinaryDictionary(context, locale));
         }
 
         final LinkedList<Dictionary> dictList = CollectionUtils.newLinkedList();
@@ -55,10 +59,11 @@ public final class DictionaryFactory {
                 BinaryDictionaryGetter.getDictionaryFiles(locale, context);
         if (null != assetFileList) {
             for (final AssetFileAddress f : assetFileList) {
-                final BinaryDictionary binaryDictionary = new BinaryDictionary(f.mFilename,
-                        f.mOffset, f.mLength, useFullEditDistance, locale, Dictionary.TYPE_MAIN);
-                if (binaryDictionary.isValidDictionary()) {
-                    dictList.add(binaryDictionary);
+                final ReadOnlyBinaryDictionary readOnlyBinaryDictionary =
+                        new ReadOnlyBinaryDictionary(f.mFilename, f.mOffset, f.mLength,
+                                useFullEditDistance, locale, Dictionary.TYPE_MAIN);
+                if (readOnlyBinaryDictionary.isValidDictionary()) {
+                    dictList.add(readOnlyBinaryDictionary);
                 }
             }
         }
@@ -84,12 +89,12 @@ public final class DictionaryFactory {
     }
 
     /**
-     * Initializes a dictionary from a raw resource file
+     * Initializes a read-only binary dictionary from a raw resource file
      * @param context application context for reading resources
      * @param locale the locale to use for the resource
-     * @return an initialized instance of BinaryDictionary
+     * @return an initialized instance of ReadOnlyBinaryDictionary
      */
-    protected static BinaryDictionary createBinaryDictionary(final Context context,
+    protected static ReadOnlyBinaryDictionary createReadOnlyBinaryDictionary(final Context context,
             final Locale locale) {
         AssetFileDescriptor afd = null;
         try {
@@ -108,7 +113,7 @@ public final class DictionaryFactory {
                 Log.e(TAG, "sourceDir is not a file: " + sourceDir);
                 return null;
             }
-            return new BinaryDictionary(sourceDir, afd.getStartOffset(), afd.getLength(),
+            return new ReadOnlyBinaryDictionary(sourceDir, afd.getStartOffset(), afd.getLength(),
                     false /* useFullEditDistance */, locale, Dictionary.TYPE_MAIN);
         } catch (android.content.res.Resources.NotFoundException e) {
             Log.e(TAG, "Could not find the resource");
@@ -126,21 +131,22 @@ public final class DictionaryFactory {
 
     /**
      * Create a dictionary from passed data. This is intended for unit tests only.
-     * @param dictionary the file to read
-     * @param startOffset the offset in the file where the data starts
-     * @param length the length of the data
+     * @param dictionaryList the list of files to read, with their offsets and lengths
      * @param useFullEditDistance whether to use the full edit distance in suggestions
      * @return the created dictionary, or null.
      */
-    public static Dictionary createDictionaryForTest(File dictionary, long startOffset, long length,
+    @UsedForTesting
+    public static Dictionary createDictionaryForTest(final AssetFileAddress[] dictionaryList,
             final boolean useFullEditDistance, Locale locale) {
-        if (dictionary.isFile()) {
-            return new BinaryDictionary(dictionary.getAbsolutePath(), startOffset, length,
-                    useFullEditDistance, locale, Dictionary.TYPE_MAIN);
-        } else {
-            Log.e(TAG, "Could not find the file. path=" + dictionary.getAbsolutePath());
-            return null;
+        final DictionaryCollection dictionaryCollection =
+                new DictionaryCollection(Dictionary.TYPE_MAIN);
+        for (final AssetFileAddress address : dictionaryList) {
+            final ReadOnlyBinaryDictionary readOnlyBinaryDictionary = new ReadOnlyBinaryDictionary(
+                    address.mFilename, address.mOffset, address.mLength, useFullEditDistance,
+                    locale, Dictionary.TYPE_MAIN);
+            dictionaryCollection.addDictionary(readOnlyBinaryDictionary);
         }
+        return dictionaryCollection;
     }
 
     /**

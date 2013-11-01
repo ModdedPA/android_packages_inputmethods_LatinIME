@@ -18,7 +18,7 @@ package com.android.inputmethod.keyboard.internal;
 
 import android.util.Log;
 
-import com.android.inputmethod.latin.CollectionUtils;
+import com.android.inputmethod.latin.utils.CollectionUtils;
 
 import java.util.ArrayList;
 
@@ -207,7 +207,7 @@ public final class PointerTrackerQueue {
         }
     }
 
-    public void cancelAllPointerTracker() {
+    public void cancelAllPointerTrackers() {
         synchronized (mExpandableArrayOfActivePointers) {
             if (DEBUG) {
                 Log.d(TAG, "cancelAllPointerTracker: " + this);

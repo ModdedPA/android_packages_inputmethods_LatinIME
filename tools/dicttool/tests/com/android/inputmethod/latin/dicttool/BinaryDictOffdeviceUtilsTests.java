@@ -16,35 +16,34 @@
 
 package com.android.inputmethod.latin.dicttool;
 
-import com.android.inputmethod.latin.makedict.BinaryDictInputOutput;
+import com.android.inputmethod.latin.makedict.DictDecoder;
+import com.android.inputmethod.latin.makedict.DictEncoder;
+import com.android.inputmethod.latin.makedict.FormatSpec;
 import com.android.inputmethod.latin.makedict.FormatSpec.FormatOptions;
 import com.android.inputmethod.latin.makedict.FusionDictionary;
 import com.android.inputmethod.latin.makedict.FusionDictionary.DictionaryOptions;
-import com.android.inputmethod.latin.makedict.FusionDictionary.Node;
+import com.android.inputmethod.latin.makedict.FusionDictionary.PtNodeArray;
 import com.android.inputmethod.latin.makedict.UnsupportedFormatException;
+import com.android.inputmethod.latin.makedict.Ver3DictEncoder;
 
 import junit.framework.TestCase;
 
 import java.io.File;
 import java.io.BufferedOutputStream;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
-import java.nio.ByteBuffer;
-import java.nio.channels.FileChannel;
-import java.util.ArrayList;
 import java.util.HashMap;
 
 /**
- * Unit tests for BinaryDictOffdeviceUtilsTests
+ * Unit tests for BinaryDictOffdeviceUtils
  */
 public class BinaryDictOffdeviceUtilsTests extends TestCase {
     private static final int TEST_FREQ = 37; // Some arbitrary value unlikely to happen by chance
 
     public void testGetRawDictWorks() throws IOException, UnsupportedFormatException {
         // Create a thrice-compressed dictionary file.
-        final FusionDictionary dict = new FusionDictionary(new Node(),
+        final FusionDictionary dict = new FusionDictionary(new PtNodeArray(),
                 new DictionaryOptions(new HashMap<String, String>(),
                         false /* germanUmlautProcessing */, false /* frenchLigatureProcessing */));
         dict.add("foo", TEST_FREQ, null, false /* isNotAWord */);
@@ -55,28 +54,28 @@ public class BinaryDictOffdeviceUtilsTests extends TestCase {
 
         final File dst = File.createTempFile("testGetRawDict", ".tmp");
         dst.deleteOnExit();
+
         final OutputStream out = Compress.getCompressedStream(
                 Compress.getCompressedStream(
                         Compress.getCompressedStream(
                                 new BufferedOutputStream(new FileOutputStream(dst)))));
-
-        BinaryDictInputOutput.writeDictionaryBinary(out, dict, new FormatOptions(2, false));
+        final DictEncoder dictEncoder = new Ver3DictEncoder(out);
+        dictEncoder.writeDictionary(dict, new FormatOptions(2, false));
 
         // Test for an actually compressed dictionary and its contents
         final BinaryDictOffdeviceUtils.DecoderChainSpec decodeSpec =
-                BinaryDictOffdeviceUtils.getRawBinaryDictionaryOrNull(dst);
+                BinaryDictOffdeviceUtils.getRawDictionaryOrNull(dst);
         for (final String step : decodeSpec.mDecoderSpec) {
             assertEquals("Wrong decode spec", BinaryDictOffdeviceUtils.COMPRESSION, step);
         }
         assertEquals("Wrong decode spec", 3, decodeSpec.mDecoderSpec.size());
-        final FileInputStream inStream = new FileInputStream(decodeSpec.mFile);
-        final ByteBuffer buffer = inStream.getChannel().map(
-                FileChannel.MapMode.READ_ONLY, 0, decodeSpec.mFile.length());
-        final FusionDictionary resultDict = BinaryDictInputOutput.readDictionaryBinary(
-                new BinaryDictInputOutput.ByteBufferWrapper(buffer),
-                null /* dict : an optional dictionary to add words to, or null */);
+        final DictDecoder dictDecoder = FormatSpec.getDictDecoder(decodeSpec.mFile);
+        final FusionDictionary resultDict = dictDecoder.readDictionaryBinary(
+                null /* dict : an optional dictionary to add words to, or null */,
+                false /* deleteDictIfBroken */);
         assertEquals("Dictionary can't be read back correctly",
-                resultDict.findWordInTree(resultDict.mRoot, "foo").getFrequency(), TEST_FREQ);
+                FusionDictionary.findWordInTree(resultDict.mRootNodeArray, "foo").getFrequency(),
+                TEST_FREQ);
     }
 
     public void testGetRawDictFails() throws IOException {
@@ -91,7 +90,7 @@ public class BinaryDictOffdeviceUtilsTests extends TestCase {
 
         // Test that a random data file actually fails
         assertNull("Wrongly identified data file",
-                BinaryDictOffdeviceUtils.getRawBinaryDictionaryOrNull(dst));
+                BinaryDictOffdeviceUtils.getRawDictionaryOrNull(dst));
 
         final File gzDst = File.createTempFile("testGetRawDict", ".tmp");
         gzDst.deleteOnExit();
@@ -104,6 +103,6 @@ public class BinaryDictOffdeviceUtilsTests extends TestCase {
 
         // Test that a compressed random data file actually fails
         assertNull("Wrongly identified data file",
-                BinaryDictOffdeviceUtils.getRawBinaryDictionaryOrNull(gzDst));
+                BinaryDictOffdeviceUtils.getRawDictionaryOrNull(gzDst));
     }
 }

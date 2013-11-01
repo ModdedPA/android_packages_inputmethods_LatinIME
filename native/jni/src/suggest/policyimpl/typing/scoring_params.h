@@ -29,6 +29,7 @@ class ScoringParams {
     static const int THRESHOLD_NEXT_WORD_PROBABILITY_FOR_CAPPED;
     static const float AUTOCORRECT_OUTPUT_THRESHOLD;
     static const int MAX_CACHE_DIC_NODE_SIZE;
+    static const int MAX_CACHE_DIC_NODE_SIZE_FOR_SINGLE_POINT;
     static const int THRESHOLD_SHORT_WORD_LENGTH;
 
     // Numerically optimized parameters (currently for tap typing only).
@@ -36,12 +37,15 @@ class ScoringParams {
     // TODO: explore optimization of gesture parameters.
     static const float DISTANCE_WEIGHT_LENGTH;
     static const float PROXIMITY_COST;
+    static const float FIRST_CHAR_PROXIMITY_COST;
     static const float FIRST_PROXIMITY_COST;
     static const float OMISSION_COST;
     static const float OMISSION_COST_SAME_CHAR;
     static const float OMISSION_COST_FIRST_CHAR;
     static const float INSERTION_COST;
+    static const float TERMINAL_INSERTION_COST;
     static const float INSERTION_COST_SAME_CHAR;
+    static const float INSERTION_COST_PROXIMITY_CHAR;
     static const float INSERTION_COST_FIRST_CHAR;
     static const float TRANSPOSITION_COST;
     static const float SPACE_SUBSTITUTION_COST;

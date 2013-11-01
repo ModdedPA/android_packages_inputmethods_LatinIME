@@ -18,11 +18,12 @@
 #define LATINIME_TYPING_WEIGHTING_H
 
 #include "defines.h"
-#include "suggest_utils.h"
 #include "suggest/core/dicnode/dic_node_utils.h"
+#include "suggest/core/layout/touch_position_correction_utils.h"
 #include "suggest/core/policy/weighting.h"
 #include "suggest/core/session/dic_traverse_session.h"
 #include "suggest/policyimpl/typing/scoring_params.h"
+#include "utils/char_utils.h"
 
 namespace latinime {
 
@@ -54,7 +55,7 @@ class TypingWeighting : public Weighting {
         const bool isZeroCostOmission = parentDicNode->isZeroCostOmission();
         const bool sameCodePoint = dicNode->isSameNodeCodePoint(parentDicNode);
         // If the traversal omitted the first letter then the dicNode should now be on the second.
-        const bool isFirstLetterOmission = dicNode->getDepth() == 2;
+        const bool isFirstLetterOmission = dicNode->getNodeCodePointCount() == 2;
         float cost = 0.0f;
         if (isZeroCostOmission) {
             cost = 0.0f;
@@ -73,16 +74,20 @@ class TypingWeighting : public Weighting {
         // Note: min() required since length can be MAX_POINT_TO_KEY_LENGTH for characters not on
         // the keyboard (like accented letters)
         const float normalizedSquaredLength = traverseSession->getProximityInfoState(0)
-                ->getPointToKeyLength(pointIndex, dicNode->getNodeCodePoint());
-        const float normalizedDistance = SuggestUtils::getSweetSpotFactor(
+                ->getPointToKeyLength(pointIndex,
+                        CharUtils::toBaseLowerCase(dicNode->getNodeCodePoint()));
+        const float normalizedDistance = TouchPositionCorrectionUtils::getSweetSpotFactor(
                 traverseSession->isTouchPositionCorrectionEnabled(), normalizedSquaredLength);
         const float weightedDistance = ScoringParams::DISTANCE_WEIGHT_LENGTH * normalizedDistance;
 
         const bool isFirstChar = pointIndex == 0;
         const bool isProximity = isProximityDicNode(traverseSession, dicNode);
-        float cost = isProximity ? (isFirstChar ? ScoringParams::FIRST_PROXIMITY_COST
+        float cost = isProximity ? (isFirstChar ? ScoringParams::FIRST_CHAR_PROXIMITY_COST
                 : ScoringParams::PROXIMITY_COST) : 0.0f;
-        if (dicNode->getDepth() == 2) {
+        if (isProximity && dicNode->getProximityCorrectionCount() == 0) {
+            cost += ScoringParams::FIRST_PROXIMITY_COST;
+        }
+        if (dicNode->getNodeCodePointCount() == 2) {
             // At the second character of the current word, we check if the first char is uppercase
             // and the word is a second or later word of a multiple word suggestion. We demote it
             // if so.
@@ -98,9 +103,9 @@ class TypingWeighting : public Weighting {
     bool isProximityDicNode(const DicTraverseSession *const traverseSession,
             const DicNode *const dicNode) const {
         const int pointIndex = dicNode->getInputIndex(0);
-        const int primaryCodePoint = toBaseLowerCase(
+        const int primaryCodePoint = CharUtils::toBaseLowerCase(
                 traverseSession->getProximityInfoState(0)->getPrimaryCodePointAt(pointIndex));
-        const int dicNodeChar = toBaseLowerCase(dicNode->getNodeCodePoint());
+        const int dicNodeChar = CharUtils::toBaseLowerCase(dicNode->getNodeCodePoint());
         return primaryCodePoint != dicNodeChar;
     }
 
@@ -109,10 +114,10 @@ class TypingWeighting : public Weighting {
         const int16_t parentPointIndex = parentDicNode->getInputIndex(0);
         const int prevCodePoint = parentDicNode->getNodeCodePoint();
         const float distance1 = traverseSession->getProximityInfoState(0)->getPointToKeyLength(
-                parentPointIndex + 1, prevCodePoint);
+                parentPointIndex + 1, CharUtils::toBaseLowerCase(prevCodePoint));
         const int codePoint = dicNode->getNodeCodePoint();
         const float distance2 = traverseSession->getProximityInfoState(0)->getPointToKeyLength(
-                parentPointIndex, codePoint);
+                parentPointIndex, CharUtils::toBaseLowerCase(codePoint));
         const float distance = distance1 + distance2;
         const float weightedLengthDistance =
                 distance * ScoringParams::DISTANCE_WEIGHT_LENGTH;
@@ -121,31 +126,38 @@ class TypingWeighting : public Weighting {
 
     float getInsertionCost(const DicTraverseSession *const traverseSession,
             const DicNode *const parentDicNode, const DicNode *const dicNode) const {
-        const int16_t parentPointIndex = parentDicNode->getInputIndex(0);
-        const int prevCodePoint =
-                traverseSession->getProximityInfoState(0)->getPrimaryCodePointAt(parentPointIndex);
-
+        const int16_t insertedPointIndex = parentDicNode->getInputIndex(0);
+        const int prevCodePoint = traverseSession->getProximityInfoState(0)->getPrimaryCodePointAt(
+                insertedPointIndex);
         const int currentCodePoint = dicNode->getNodeCodePoint();
         const bool sameCodePoint = prevCodePoint == currentCodePoint;
+        const bool existsAdjacentProximityChars = traverseSession->getProximityInfoState(0)
+                ->existsAdjacentProximityChars(insertedPointIndex);
         const float dist = traverseSession->getProximityInfoState(0)->getPointToKeyLength(
-                parentPointIndex + 1, currentCodePoint);
+                insertedPointIndex + 1, CharUtils::toBaseLowerCase(dicNode->getNodeCodePoint()));
         const float weightedDistance = dist * ScoringParams::DISTANCE_WEIGHT_LENGTH;
-        const bool singleChar = dicNode->getDepth() == 1;
-        const float cost = (singleChar ? ScoringParams::INSERTION_COST_FIRST_CHAR : 0.0f)
-                + (sameCodePoint ? ScoringParams::INSERTION_COST_SAME_CHAR
-                        : ScoringParams::INSERTION_COST);
+        const bool singleChar = dicNode->getNodeCodePointCount() == 1;
+        float cost = (singleChar ? ScoringParams::INSERTION_COST_FIRST_CHAR : 0.0f);
+        if (sameCodePoint) {
+            cost += ScoringParams::INSERTION_COST_SAME_CHAR;
+        } else if (existsAdjacentProximityChars) {
+            cost += ScoringParams::INSERTION_COST_PROXIMITY_CHAR;
+        } else {
+            cost += ScoringParams::INSERTION_COST;
+        }
         return cost + weightedDistance;
     }
 
-    float getNewWordCost(const DicTraverseSession *const traverseSession,
-            const DicNode *const dicNode) const {
+    float getNewWordSpatialCost(const DicTraverseSession *const traverseSession,
+            const DicNode *const dicNode, DicNode_InputStateG *inputStateG) const {
         return ScoringParams::COST_NEW_WORD * traverseSession->getMultiWordCostMultiplier();
     }
 
-    float getNewWordBigramCost(const DicTraverseSession *const traverseSession,
+    float getNewWordBigramLanguageCost(const DicTraverseSession *const traverseSession,
             const DicNode *const dicNode,
             MultiBigramMap *const multiBigramMap) const {
-        return DicNodeUtils::getBigramNodeImprobability(traverseSession->getOffsetDict(),
+        return DicNodeUtils::getBigramNodeImprobability(
+                traverseSession->getDictionaryStructurePolicy(),
                 dicNode, multiBigramMap) * ScoringParams::DISTANCE_WEIGHT_LANGUAGE;
     }
 
@@ -162,9 +174,16 @@ class TypingWeighting : public Weighting {
 
     float getTerminalLanguageCost(const DicTraverseSession *const traverseSession,
             const DicNode *const dicNode, const float dicNodeLanguageImprobability) const {
-        const float languageImprobability = (dicNode->isExactMatch()) ?
-                0.0f : dicNodeLanguageImprobability;
-        return languageImprobability * ScoringParams::DISTANCE_WEIGHT_LANGUAGE;
+        return dicNodeLanguageImprobability * ScoringParams::DISTANCE_WEIGHT_LANGUAGE;
+    }
+
+    float getTerminalInsertionCost(const DicTraverseSession *const traverseSession,
+            const DicNode *const dicNode) const {
+        const int inputIndex = dicNode->getInputIndex(0);
+        const int inputSize = traverseSession->getInputSize();
+        ASSERT(inputIndex < inputSize);
+        // TODO: Implement more efficient logic
+        return  ScoringParams::TERMINAL_INSERTION_COST * (inputSize - inputIndex);
     }
 
     AK_FORCE_INLINE bool needsToNormalizeCompoundDistance() const {

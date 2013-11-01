@@ -20,13 +20,7 @@
 #include <stdint.h>
 
 #include "defines.h"
-#include "dic_node_priority_queue.h"
-
-#define INITIAL_QUEUE_ID_ACTIVE 0
-#define INITIAL_QUEUE_ID_NEXT_ACTIVE 1
-#define INITIAL_QUEUE_ID_TERMINAL 2
-#define INITIAL_QUEUE_ID_CACHE_FOR_CONTINUOUS_SUGGESTION 3
-#define PRIORITY_QUEUES_SIZE 4
+#include "suggest/core/dicnode/dic_node_priority_queue.h"
 
 namespace latinime {
 
@@ -37,24 +31,32 @@ class DicNode;
  */
 class DicNodesCache {
  public:
-    AK_FORCE_INLINE DicNodesCache()
-            : mActiveDicNodes(&mDicNodePriorityQueues[INITIAL_QUEUE_ID_ACTIVE]),
-              mNextActiveDicNodes(&mDicNodePriorityQueues[INITIAL_QUEUE_ID_NEXT_ACTIVE]),
-              mTerminalDicNodes(&mDicNodePriorityQueues[INITIAL_QUEUE_ID_TERMINAL]),
-              mCachedDicNodesForContinuousSuggestion(
-                      &mDicNodePriorityQueues[INITIAL_QUEUE_ID_CACHE_FOR_CONTINUOUS_SUGGESTION]),
-              mInputIndex(0), mLastCachedInputIndex(0) {
-    }
+    AK_FORCE_INLINE explicit DicNodesCache(const bool usesLargeCapacityCache)
+            : mUsesLargeCapacityCache(usesLargeCapacityCache),
+              mDicNodePriorityQueue0(getCacheCapacity()),
+              mDicNodePriorityQueue1(getCacheCapacity()),
+              mDicNodePriorityQueue2(getCacheCapacity()),
+              mDicNodePriorityQueueForTerminal(MAX_RESULTS),
+              mActiveDicNodes(&mDicNodePriorityQueue0),
+              mNextActiveDicNodes(&mDicNodePriorityQueue1),
+              mCachedDicNodesForContinuousSuggestion(&mDicNodePriorityQueue2),
+              mTerminalDicNodes(&mDicNodePriorityQueueForTerminal),
+              mInputIndex(0), mLastCachedInputIndex(0) {}
 
     AK_FORCE_INLINE virtual ~DicNodesCache() {}
 
     AK_FORCE_INLINE void reset(const int nextActiveSize, const int terminalSize) {
         mInputIndex = 0;
         mLastCachedInputIndex = 0;
-        mActiveDicNodes->reset();
-        mNextActiveDicNodes->clearAndResize(nextActiveSize);
+        // We want to use the max capacity for the current active dic node queue.
+        mActiveDicNodes->clearAndResizeToCapacity();
+        // nextActiveSize is used to limit the next iteration's active dic node size.
+        const int nextActiveSizeFittingToTheCapacity = min(nextActiveSize, getCacheCapacity());
+        mNextActiveDicNodes->clearAndResize(nextActiveSizeFittingToTheCapacity);
         mTerminalDicNodes->clearAndResize(terminalSize);
-        mCachedDicNodesForContinuousSuggestion->reset();
+        // We want to use the max capacity for the cached dic nodes that will be used for the
+        // continuous suggestion.
+        mCachedDicNodesForContinuousSuggestion->clearAndResizeToCapacity();
     }
 
     AK_FORCE_INLINE void continueSearch() {
@@ -147,9 +149,8 @@ class DicNodesCache {
             mCachedDicNodesForContinuousSuggestion->dump();
         }
         mInputIndex = mLastCachedInputIndex;
-        mCachedDicNodesForContinuousSuggestion =
-                moveNodesAndReturnReusableEmptyQueue(
-                        mCachedDicNodesForContinuousSuggestion, &mActiveDicNodes);
+        mCachedDicNodesForContinuousSuggestion = moveNodesAndReturnReusableEmptyQueue(
+                mCachedDicNodesForContinuousSuggestion, &mActiveDicNodes);
     }
 
     AK_FORCE_INLINE static DicNodePriorityQueue *moveNodesAndReturnReusableEmptyQueue(
@@ -163,21 +164,35 @@ class DicNodesCache {
         return tmp;
     }
 
+    AK_FORCE_INLINE int getCacheCapacity() const {
+        return mUsesLargeCapacityCache ?
+                LARGE_PRIORITY_QUEUE_CAPACITY : SMALL_PRIORITY_QUEUE_CAPACITY;
+    }
+
     AK_FORCE_INLINE void resetTemporaryCaches() {
         mActiveDicNodes->clear();
         mNextActiveDicNodes->clear();
         mTerminalDicNodes->clear();
     }
 
-    DicNodePriorityQueue mDicNodePriorityQueues[PRIORITY_QUEUES_SIZE];
+    static const int LARGE_PRIORITY_QUEUE_CAPACITY;
+    static const int SMALL_PRIORITY_QUEUE_CAPACITY;
+
+    const bool mUsesLargeCapacityCache;
+    // Instances
+    DicNodePriorityQueue mDicNodePriorityQueue0;
+    DicNodePriorityQueue mDicNodePriorityQueue1;
+    DicNodePriorityQueue mDicNodePriorityQueue2;
+    DicNodePriorityQueue mDicNodePriorityQueueForTerminal;
+
     // Active dicNodes currently being expanded.
     DicNodePriorityQueue *mActiveDicNodes;
     // Next dicNodes to be expanded.
     DicNodePriorityQueue *mNextActiveDicNodes;
-    // Current top terminal dicNodes.
-    DicNodePriorityQueue *mTerminalDicNodes;
     // Cached dicNodes used for continuous suggestion.
     DicNodePriorityQueue *mCachedDicNodesForContinuousSuggestion;
+    // Current top terminal dicNodes.
+    DicNodePriorityQueue *mTerminalDicNodes;
     int mInputIndex;
     int mLastCachedInputIndex;
 };

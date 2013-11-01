@@ -28,18 +28,38 @@ import java.util.ArrayList;
 public abstract class Dictionary {
     public static final int NOT_A_PROBABILITY = -1;
 
+    // The following types do not actually come from real dictionary instances, so we create
+    // corresponding instances.
     public static final String TYPE_USER_TYPED = "user_typed";
+    public static final Dictionary DICTIONARY_USER_TYPED = new PhonyDictionary(TYPE_USER_TYPED);
+
     public static final String TYPE_APPLICATION_DEFINED = "application_defined";
+    public static final Dictionary DICTIONARY_APPLICATION_DEFINED =
+            new PhonyDictionary(TYPE_APPLICATION_DEFINED);
+
     public static final String TYPE_HARDCODED = "hardcoded"; // punctuation signs and such
+    public static final Dictionary DICTIONARY_HARDCODED =
+            new PhonyDictionary(TYPE_HARDCODED);
+
+    // Spawned by resuming suggestions. Comes from a span that was in the TextView.
+    public static final String TYPE_RESUMED = "resumed";
+    public static final Dictionary DICTIONARY_RESUMED =
+            new PhonyDictionary(TYPE_RESUMED);
+
+    // The following types of dictionary have actual functional instances. We don't need final
+    // phony dictionary instances for them.
     public static final String TYPE_MAIN = "main";
     public static final String TYPE_CONTACTS = "contacts";
     // User dictionary, the system-managed one.
     public static final String TYPE_USER = "user";
-    // User history dictionary internal to LatinIME.
+    // User history dictionary internal to LatinIME. This assumes bigram prediction for now.
     public static final String TYPE_USER_HISTORY = "history";
-    // Spawned by resuming suggestions. Comes from a span that was in the TextView.
-    public static final String TYPE_RESUMED = "resumed";
-    protected final String mDictType;
+    // Personalization binary dictionary internal to LatinIME.
+    public static final String TYPE_PERSONALIZATION = "personalization";
+    // Personalization prediction dictionary internal to LatinIME's Java code.
+    public static final String TYPE_PERSONALIZATION_PREDICTION_IN_JAVA =
+            "personalization_prediction_in_java";
+    public final String mDictType;
 
     public Dictionary(final String dictType) {
         mDictType = dictType;
@@ -52,20 +72,23 @@ public abstract class Dictionary {
      * @param prevWord the previous word, or null if none
      * @param proximityInfo the object for key proximity. May be ignored by some implementations.
      * @param blockOffensiveWords whether to block potentially offensive words
+     * @param additionalFeaturesOptions options about additional features used for the suggestion.
      * @return the list of suggestions (possibly null if none)
      */
     // TODO: pass more context than just the previous word, to enable better suggestions (n-gram
     // and more)
     abstract public ArrayList<SuggestedWordInfo> getSuggestions(final WordComposer composer,
             final String prevWord, final ProximityInfo proximityInfo,
-            final boolean blockOffensiveWords);
+            final boolean blockOffensiveWords, final int[] additionalFeaturesOptions);
 
     // The default implementation of this method ignores sessionId.
     // Subclasses that want to use sessionId need to override this method.
     public ArrayList<SuggestedWordInfo> getSuggestionsWithSessionId(final WordComposer composer,
             final String prevWord, final ProximityInfo proximityInfo,
-            final boolean blockOffensiveWords, final int sessionId) {
-        return getSuggestions(composer, prevWord, proximityInfo, blockOffensiveWords);
+            final boolean blockOffensiveWords, final int[] additionalFeaturesOptions,
+            final int sessionId) {
+        return getSuggestions(composer, prevWord, proximityInfo, blockOffensiveWords,
+                additionalFeaturesOptions);
     }
 
     /**
@@ -109,8 +132,43 @@ public abstract class Dictionary {
     /**
      * Subclasses may override to indicate that this Dictionary is not yet properly initialized.
      */
-
     public boolean isInitialized() {
         return true;
+    }
+
+    /**
+     * Whether we think this suggestion should trigger an auto-commit. prevWord is the word
+     * before the suggestion, so that we can use n-gram frequencies.
+     * @param candidate The candidate suggestion, in whole (not only the first part).
+     * @return whether we should auto-commit or not.
+     */
+    public boolean shouldAutoCommit(final SuggestedWordInfo candidate) {
+        // If we don't have support for auto-commit, or if we don't know, we return false to
+        // avoid auto-committing stuff. Implementations of the Dictionary class that know to
+        // determine whether we should auto-commit will override this.
+        return false;
+    }
+
+    /**
+     * Not a true dictionary. A placeholder used to indicate suggestions that don't come from any
+     * real dictionary.
+     */
+    private static class PhonyDictionary extends Dictionary {
+        // This class is not publicly instantiable.
+        private PhonyDictionary(final String type) {
+            super(type);
+        }
+
+        @Override
+        public ArrayList<SuggestedWordInfo> getSuggestions(final WordComposer composer,
+                final String prevWord, final ProximityInfo proximityInfo,
+                final boolean blockOffensiveWords, final int[] additionalFeaturesOptions) {
+            return null;
+        }
+
+        @Override
+        public boolean isValidWord(String word) {
+            return false;
+        }
     }
 }

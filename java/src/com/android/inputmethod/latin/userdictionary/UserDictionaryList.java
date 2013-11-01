@@ -16,10 +16,8 @@
 
 package com.android.inputmethod.latin.userdictionary;
 
-import com.android.inputmethod.latin.LocaleUtils;
-import com.android.inputmethod.latin.R;
-
 import android.app.Activity;
+import android.content.Context;
 import android.content.Intent;
 import android.database.Cursor;
 import android.os.Bundle;
@@ -28,7 +26,14 @@ import android.preference.PreferenceFragment;
 import android.preference.PreferenceGroup;
 import android.provider.UserDictionary;
 import android.text.TextUtils;
+import android.view.inputmethod.InputMethodInfo;
+import android.view.inputmethod.InputMethodManager;
+import android.view.inputmethod.InputMethodSubtype;
 
+import com.android.inputmethod.latin.R;
+import com.android.inputmethod.latin.utils.LocaleUtils;
+
+import java.util.List;
 import java.util.Locale;
 import java.util.TreeSet;
 
@@ -52,8 +57,7 @@ public class UserDictionaryList extends PreferenceFragment {
         final Cursor cursor = activity.managedQuery(UserDictionary.Words.CONTENT_URI,
                 new String[] { UserDictionary.Words.LOCALE },
                 null, null, null);
-        final TreeSet<String> localeList = new TreeSet<String>();
-        boolean addedAllLocale = false;
+        final TreeSet<String> localeSet = new TreeSet<String>();
         if (null == cursor) {
             // The user dictionary service is not present or disabled. Return null.
             return null;
@@ -61,20 +65,39 @@ public class UserDictionaryList extends PreferenceFragment {
             final int columnIndex = cursor.getColumnIndex(UserDictionary.Words.LOCALE);
             do {
                 final String locale = cursor.getString(columnIndex);
-                final boolean allLocale = TextUtils.isEmpty(locale);
-                localeList.add(allLocale ? "" : locale);
-                if (allLocale) {
-                    addedAllLocale = true;
-                }
+                localeSet.add(null != locale ? locale : "");
             } while (cursor.moveToNext());
         }
-        if (!UserDictionarySettings.IS_SHORTCUT_API_SUPPORTED && !addedAllLocale) {
+        if (!UserDictionarySettings.IS_SHORTCUT_API_SUPPORTED) {
             // For ICS, we need to show "For all languages" in case that the keyboard locale
             // is different from the system locale
-            localeList.add("");
+            localeSet.add("");
         }
-        localeList.add(Locale.getDefault().toString());
-        return localeList;
+
+        final InputMethodManager imm =
+                (InputMethodManager)activity.getSystemService(Context.INPUT_METHOD_SERVICE);
+        final List<InputMethodInfo> imis = imm.getEnabledInputMethodList();
+        for (final InputMethodInfo imi : imis) {
+            final List<InputMethodSubtype> subtypes =
+                    imm.getEnabledInputMethodSubtypeList(
+                            imi, true /* allowsImplicitlySelectedSubtypes */);
+            for (InputMethodSubtype subtype : subtypes) {
+                final String locale = subtype.getLocale();
+                if (!TextUtils.isEmpty(locale)) {
+                    localeSet.add(locale);
+                }
+            }
+        }
+
+        // We come here after we have collected locales from existing user dictionary entries and
+        // enabled subtypes. If we already have the locale-without-country version of the system
+        // locale, we don't add the system locale to avoid confusion even though it's technically
+        // correct to add it.
+        if (!localeSet.contains(Locale.getDefault().getLanguage().toString())) {
+            localeSet.add(Locale.getDefault().toString());
+        }
+
+        return localeSet;
     }
 
     /**
@@ -84,13 +107,19 @@ public class UserDictionaryList extends PreferenceFragment {
     protected void createUserDictSettings(PreferenceGroup userDictGroup) {
         final Activity activity = getActivity();
         userDictGroup.removeAll();
-        final TreeSet<String> localeList =
+        final TreeSet<String> localeSet =
                 UserDictionaryList.getUserDictionaryLocalesSet(activity);
 
-        if (localeList.isEmpty()) {
+        if (localeSet.size() > 1) {
+            // Have an "All languages" entry in the languages list if there are two or more active
+            // languages
+            localeSet.add("");
+        }
+
+        if (localeSet.isEmpty()) {
             userDictGroup.addPreference(createUserDictionaryPreference(null, activity));
         } else {
-            for (String locale : localeList) {
+            for (String locale : localeSet) {
                 userDictGroup.addPreference(createUserDictionaryPreference(locale, activity));
             }
         }

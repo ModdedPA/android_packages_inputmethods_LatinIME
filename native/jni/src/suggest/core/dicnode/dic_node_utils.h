@@ -18,7 +18,6 @@
 #define LATINIME_DIC_NODE_UTILS_H
 
 #include <stdint.h>
-#include <vector>
 
 #include "defines.h"
 
@@ -26,56 +25,35 @@ namespace latinime {
 
 class DicNode;
 class DicNodeVector;
-class ProximityInfo;
-class ProximityInfoState;
+class DictionaryStructureWithBufferPolicy;
 class MultiBigramMap;
 
 class DicNodeUtils {
  public:
     static int appendTwoWords(const int *src0, const int16_t length0, const int *src1,
             const int16_t length1, int *dest);
-    static void initAsRoot(const int rootPos, const uint8_t *const dicRoot,
+    static void initAsRoot(
+            const DictionaryStructureWithBufferPolicy *const dictionaryStructurePolicy,
             const int prevWordNodePos, DicNode *newRootNode);
-    static void initAsRootWithPreviousWord(const int rootPos, const uint8_t *const dicRoot,
+    static void initAsRootWithPreviousWord(
+            const DictionaryStructureWithBufferPolicy *const dictionaryStructurePolicy,
             DicNode *prevWordLastNode, DicNode *newRootNode);
     static void initByCopy(DicNode *srcNode, DicNode *destNode);
-    static void getAllChildDicNodes(DicNode *dicNode, const uint8_t *const dicRoot,
+    static void getAllChildDicNodes(DicNode *dicNode,
+            const DictionaryStructureWithBufferPolicy *const dictionaryStructurePolicy,
             DicNodeVector *childDicNodes);
-    static float getBigramNodeImprobability(const uint8_t *const dicRoot,
+    static float getBigramNodeImprobability(
+            const DictionaryStructureWithBufferPolicy *const dictionaryStructurePolicy,
             const DicNode *const node, MultiBigramMap *const multiBigramMap);
-    static bool isDicNodeFilteredOut(const int nodeCodePoint, const ProximityInfo *const pInfo,
-            const std::vector<int> *const codePointsFilter);
-    // TODO: Move to private
-    static void getProximityChildDicNodes(DicNode *dicNode, const uint8_t *const dicRoot,
-            const ProximityInfoState *pInfoState, const int pointIndex, bool exactOnly,
-            DicNodeVector *childDicNodes);
-
-    // TODO: Move to proximity info
-    static bool isProximityChar(ProximityType type) {
-        return type == MATCH_CHAR || type == PROXIMITY_CHAR || type == ADDITIONAL_PROXIMITY_CHAR;
-    }
 
  private:
     DISALLOW_IMPLICIT_CONSTRUCTORS(DicNodeUtils);
     // Max number of bigrams to look up
     static const int MAX_BIGRAMS_CONSIDERED_PER_CONTEXT = 500;
 
-    static int getBigramNodeProbability(const uint8_t *const dicRoot, const DicNode *const node,
-            MultiBigramMap *multiBigramMap);
-    static void createAndGetPassingChildNode(DicNode *dicNode, const ProximityInfoState *pInfoState,
-            const int pointIndex, const bool exactOnly, DicNodeVector *childDicNodes);
-    static void createAndGetAllLeavingChildNodes(DicNode *dicNode, const uint8_t *const dicRoot,
-            const ProximityInfoState *pInfoState, const int pointIndex, const bool exactOnly,
-            const std::vector<int> *const codePointsFilter,
-            const ProximityInfo *const pInfo, DicNodeVector *childDicNodes);
-    static int createAndGetLeavingChildNode(DicNode *dicNode, int pos, const uint8_t *const dicRoot,
-            const int terminalDepth, const ProximityInfoState *pInfoState, const int pointIndex,
-            const bool exactOnly, const std::vector<int> *const codePointsFilter,
-            const ProximityInfo *const pInfo, DicNodeVector *childDicNodes);
-
-    // TODO: Move to proximity info
-    static bool isMatchedNodeCodePoint(const ProximityInfoState *pInfoState, const int pointIndex,
-            const bool exactOnly, const int nodeCodePoint);
+    static int getBigramNodeProbability(
+            const DictionaryStructureWithBufferPolicy *const dictionaryStructurePolicy,
+            const DicNode *const node, MultiBigramMap *multiBigramMap);
 };
 } // namespace latinime
 #endif // LATINIME_DIC_NODE_UTILS_H

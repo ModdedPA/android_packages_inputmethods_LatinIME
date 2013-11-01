@@ -36,6 +36,7 @@ import android.widget.FrameLayout;
 import com.android.inputmethod.keyboard.Key;
 import com.android.inputmethod.keyboard.Keyboard;
 import com.android.inputmethod.latin.SuggestedWords.SuggestedWordInfo;
+import com.android.inputmethod.latin.utils.LocaleUtils;
 
 import java.util.Locale;
 
@@ -43,8 +44,10 @@ public class InputTestsBase extends ServiceTestCase<LatinIMEForTests> {
 
     private static final String PREF_DEBUG_MODE = "debug_mode";
 
-    // The message that sets the underline is posted with a 100 ms delay
+    // The message that sets the underline is posted with a 200 ms delay
     protected static final int DELAY_TO_WAIT_FOR_UNDERLINE = 200;
+    // The message that sets predictions is posted with a 200 ms delay
+    protected static final int DELAY_TO_WAIT_FOR_PREDICTIONS = 200;
 
     protected LatinIME mLatinIME;
     protected Keyboard mKeyboard;
@@ -203,17 +206,16 @@ public class InputTestsBase extends ServiceTestCase<LatinIMEForTests> {
         // view and only delegates to the parts of the code that care. So we don't include them here
         // to keep these tests as pinpoint as possible and avoid bringing it too many dependencies,
         // but keep them in mind if something breaks. Commenting them out as is should work.
-        //mLatinIME.onPressKey(codePoint);
-        for (final Key key : mKeyboard.mKeys) {
-            if (key.mCode == codePoint) {
-                final int x = key.mX + key.mWidth / 2;
-                final int y = key.mY + key.mHeight / 2;
-                mLatinIME.onCodeInput(codePoint, x, y);
-                return;
-            }
+        //mLatinIME.onPressKey(codePoint, 0 /* repeatCount */, true /* isSinglePointer */);
+        final Key key = mKeyboard.getKey(codePoint);
+        if (key != null) {
+            final int x = key.getX() + key.getWidth() / 2;
+            final int y = key.getY() + key.getHeight() / 2;
+            mLatinIME.onCodeInput(codePoint, x, y);
+            return;
         }
         mLatinIME.onCodeInput(codePoint, Constants.NOT_A_COORDINATE, Constants.NOT_A_COORDINATE);
-        //mLatinIME.onReleaseKey(codePoint, false);
+        //mLatinIME.onReleaseKey(codePoint, false /* withSliding */);
     }
 
     protected void type(final String stringToType) {
@@ -224,7 +226,7 @@ public class InputTestsBase extends ServiceTestCase<LatinIMEForTests> {
 
     protected void waitForDictionaryToBeLoaded() {
         int remainingAttempts = 300;
-        while (remainingAttempts > 0 && mLatinIME.mSuggest.isCurrentlyWaitingForMainDictionary()) {
+        while (remainingAttempts > 0 && mLatinIME.isCurrentlyWaitingForMainDictionary()) {
             try {
                 Thread.sleep(200);
             } catch (InterruptedException e) {
@@ -233,22 +235,36 @@ public class InputTestsBase extends ServiceTestCase<LatinIMEForTests> {
                 --remainingAttempts;
             }
         }
-        if (!mLatinIME.mSuggest.hasMainDictionary()) {
-            throw new RuntimeException("Can't initialize the main dictionary");
-        }
     }
 
     protected void changeLanguage(final String locale) {
+        changeLanguageWithoutWait(locale);
+        waitForDictionaryToBeLoaded();
+    }
+
+    protected void changeLanguageWithoutWait(final String locale) {
         mEditText.mCurrentLocale = LocaleUtils.constructLocaleFromString(locale);
         SubtypeSwitcher.getInstance().forceLocale(mEditText.mCurrentLocale);
         mLatinIME.loadKeyboard();
+        runMessages();
         mKeyboard = mLatinIME.mKeyboardSwitcher.getKeyboard();
+    }
+
+    protected void changeKeyboardLocaleAndDictLocale(final String keyboardLocale,
+            final String dictLocale) {
+        changeLanguage(keyboardLocale);
+        if (!keyboardLocale.equals(dictLocale)) {
+            mLatinIME.replaceMainDictionaryForTest(
+                    LocaleUtils.constructLocaleFromString(dictLocale));
+        }
         waitForDictionaryToBeLoaded();
     }
 
     protected void pickSuggestionManually(final int index, final String suggestion) {
         mLatinIME.pickSuggestionManually(index, new SuggestedWordInfo(suggestion, 1,
-                SuggestedWordInfo.KIND_CORRECTION, "main"));
+                SuggestedWordInfo.KIND_CORRECTION, null /* sourceDict */,
+                SuggestedWordInfo.NOT_AN_INDEX /* indexOfTouchPointOfSecondWord */,
+                SuggestedWordInfo.NOT_A_CONFIDENCE /* autoCommitFirstWordConfidence */));
     }
 
     // Helper to avoid writing the try{}catch block each time

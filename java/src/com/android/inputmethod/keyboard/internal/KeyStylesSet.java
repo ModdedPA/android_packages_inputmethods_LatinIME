@@ -20,9 +20,9 @@ import android.content.res.TypedArray;
 import android.util.Log;
 import android.util.SparseArray;
 
-import com.android.inputmethod.latin.CollectionUtils;
 import com.android.inputmethod.latin.R;
-import com.android.inputmethod.latin.XmlParseUtils;
+import com.android.inputmethod.latin.utils.CollectionUtils;
+import com.android.inputmethod.latin.utils.XmlParseUtils;
 
 import org.xmlpull.v1.XmlPullParser;
 import org.xmlpull.v1.XmlPullParserException;
@@ -66,7 +66,7 @@ public final class KeyStylesSet {
         }
 
         @Override
-        public int getFlag(final TypedArray a, final int index) {
+        public int getFlags(final TypedArray a, final int index) {
             return a.getInt(index, 0);
         }
     }
@@ -123,14 +123,12 @@ public final class KeyStylesSet {
         }
 
         @Override
-        public int getFlag(final TypedArray a, final int index) {
-            int flags = a.getInt(index, 0);
-            final Object value = mStyleAttributes.get(index);
-            if (value != null) {
-                flags |= (Integer)value;
-            }
-            final KeyStyle parentStyle = mStyles.get(mParentStyleName);
-            return flags | parentStyle.getFlag(a, index);
+        public int getFlags(final TypedArray a, final int index) {
+            final int parentFlags = mStyles.get(mParentStyleName).getFlags(a, index);
+            final Integer value = (Integer)mStyleAttributes.get(index);
+            final int styleFlags = (value != null) ? value : 0;
+            final int flags = a.getInt(index, 0);
+            return flags | styleFlags | parentFlags;
         }
 
         public void readKeyAttributes(final TypedArray keyAttr) {
@@ -142,13 +140,13 @@ public final class KeyStylesSet {
             readString(keyAttr, R.styleable.Keyboard_Key_keyHintLabel);
             readStringArray(keyAttr, R.styleable.Keyboard_Key_moreKeys);
             readStringArray(keyAttr, R.styleable.Keyboard_Key_additionalMoreKeys);
-            readFlag(keyAttr, R.styleable.Keyboard_Key_keyLabelFlags);
+            readFlags(keyAttr, R.styleable.Keyboard_Key_keyLabelFlags);
             readString(keyAttr, R.styleable.Keyboard_Key_keyIcon);
             readString(keyAttr, R.styleable.Keyboard_Key_keyIconDisabled);
             readString(keyAttr, R.styleable.Keyboard_Key_keyIconPreview);
             readInt(keyAttr, R.styleable.Keyboard_Key_maxMoreKeysColumn);
             readInt(keyAttr, R.styleable.Keyboard_Key_backgroundType);
-            readFlag(keyAttr, R.styleable.Keyboard_Key_keyActionFlags);
+            readFlags(keyAttr, R.styleable.Keyboard_Key_keyActionFlags);
         }
 
         private void readString(final TypedArray a, final int index) {
@@ -163,10 +161,11 @@ public final class KeyStylesSet {
             }
         }
 
-        private void readFlag(final TypedArray a, final int index) {
+        private void readFlags(final TypedArray a, final int index) {
             if (a.hasValue(index)) {
                 final Integer value = (Integer)mStyleAttributes.get(index);
-                mStyleAttributes.put(index, a.getInt(index, 0) | (value != null ? value : 0));
+                final int styleFlags = value != null ? value : 0;
+                mStyleAttributes.put(index, a.getInt(index, 0) | styleFlags);
             }
         }
 

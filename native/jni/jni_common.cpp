@@ -18,9 +18,12 @@
 
 #include "jni_common.h"
 
+#ifndef HOST_TOOL
 #include "com_android_inputmethod_keyboard_ProximityInfo.h"
 #include "com_android_inputmethod_latin_BinaryDictionary.h"
 #include "com_android_inputmethod_latin_DicTraverseSession.h"
+#endif
+#include "com_android_inputmethod_latin_makedict_Ver3DictDecoder.h"
 #include "defines.h"
 
 /*
@@ -38,6 +41,7 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved) {
         AKLOGE("ERROR: JNIEnv is invalid");
         return -1;
     }
+#ifndef HOST_TOOL
     if (!latinime::register_BinaryDictionary(env)) {
         AKLOGE("ERROR: BinaryDictionary native registration failed");
         return -1;
@@ -50,13 +54,18 @@ jint JNI_OnLoad(JavaVM *vm, void *reserved) {
         AKLOGE("ERROR: ProximityInfo native registration failed");
         return -1;
     }
+#endif
+    if (!latinime::register_Ver3DictDecoder(env)) {
+        AKLOGE("ERROR: Ver3DictDecoder native registration failed");
+        return -1;
+    }
     /* success -- return valid version number */
     return JNI_VERSION_1_6;
 }
 
 namespace latinime {
-int registerNativeMethods(JNIEnv *env, const char *className, JNINativeMethod *methods,
-        int numMethods) {
+int registerNativeMethods(JNIEnv *env, const char *const className, const JNINativeMethod *methods,
+        const int numMethods) {
     jclass clazz = env->FindClass(className);
     if (!clazz) {
         AKLOGE("Native registration unable to find class '%s'", className);

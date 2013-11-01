@@ -22,9 +22,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
-import java.io.InputStream;
 import java.io.IOException;
-import java.io.OutputStream;
 
 public class Package {
     private Package() {
@@ -39,10 +37,12 @@ public class Package {
         public Packager() {
         }
 
+        @Override
         public String getHelp() {
             return COMMAND + " <src_filename> <dst_filename>: Package a file for distribution";
         }
 
+        @Override
         public void run() throws IOException {
             if (mArgs.length != 2) {
                 throw new RuntimeException("Too many/too few arguments for command " + COMMAND);
@@ -67,17 +67,19 @@ public class Package {
         public Unpackager() {
         }
 
+        @Override
         public String getHelp() {
             return COMMAND + " <src_filename> <dst_filename>: Detects how a file is packaged and\n"
                     + "decrypts/uncompresses as necessary to produce a raw binary file.";
         }
 
+        @Override
         public void run() throws FileNotFoundException, IOException {
             if (mArgs.length != 2) {
                 throw new RuntimeException("Too many/too few arguments for command " + COMMAND);
             }
             final BinaryDictOffdeviceUtils.DecoderChainSpec decodedSpec =
-                    BinaryDictOffdeviceUtils.getRawBinaryDictionaryOrNull(new File(mArgs[0]));
+                    BinaryDictOffdeviceUtils.getRawDictionaryOrNull(new File(mArgs[0]));
             if (null == decodedSpec) {
                 System.out.println(mArgs[0] + " does not seem to be a dictionary");
                 return;

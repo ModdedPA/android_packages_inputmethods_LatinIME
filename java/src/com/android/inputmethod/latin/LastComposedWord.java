@@ -47,7 +47,7 @@ public final class LastComposedWord {
     public final String mPrevWord;
     public final int mCapitalizedMode;
     public final InputPointers mInputPointers =
-            new InputPointers(Constants.Dictionary.MAX_WORD_LENGTH);
+            new InputPointers(Constants.DICTIONARY_MAX_WORD_LENGTH);
 
     private boolean mActive;
 
@@ -82,9 +82,5 @@ public final class LastComposedWord {
 
     private boolean didCommitTypedWord() {
         return TextUtils.equals(mTypedWord, mCommittedWord);
-    }
-
-    public static int getSeparatorLength(final String separatorString) {
-        return StringUtils.codePointCount(separatorString);
     }
 }

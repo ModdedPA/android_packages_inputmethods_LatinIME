@@ -23,8 +23,8 @@ import android.view.MotionEvent;
 import android.view.View;
 
 import com.android.inputmethod.latin.Constants;
-import com.android.inputmethod.latin.CoordinateUtils;
 import com.android.inputmethod.latin.R;
+import com.android.inputmethod.latin.utils.CoordinateUtils;
 
 /**
  * A view that renders a virtual {@link MoreKeysKeyboard}. It handles rendering of keys and
@@ -34,7 +34,7 @@ public class MoreKeysKeyboardView extends KeyboardView implements MoreKeysPanel 
     private final int[] mCoordinates = CoordinateUtils.newInstance();
 
     protected final KeyDetector mKeyDetector;
-    private Controller mController;
+    private Controller mController = EMPTY_CONTROLLER;
     protected KeyboardActionListener mListener;
     private int mOriginX;
     private int mOriginY;
@@ -119,7 +119,7 @@ public class MoreKeysKeyboardView extends KeyboardView implements MoreKeysPanel 
         onMoveKeyInternal(x, y, pointerId);
         if (hasOldKey && mCurrentKey == null) {
             // If the pointer has moved too far away from any target then cancel the panel.
-            mController.onCancelMoreKeysPanel();
+            mController.onCancelMoreKeysPanel(this);
         }
     }
 
@@ -127,7 +127,7 @@ public class MoreKeysKeyboardView extends KeyboardView implements MoreKeysPanel 
     public void onUpEvent(final int x, final int y, final int pointerId, final long eventTime) {
         if (mCurrentKey != null && mActivePointerId == pointerId) {
             updateReleaseKeyGraphics(mCurrentKey);
-            onCodeInput(mCurrentKey.mCode, x, y);
+            onCodeInput(mCurrentKey.getCode(), x, y);
             mCurrentKey = null;
         }
     }
@@ -173,9 +173,11 @@ public class MoreKeysKeyboardView extends KeyboardView implements MoreKeysPanel 
     }
 
     @Override
-    public boolean dismissMoreKeysPanel() {
-        if (mController == null) return false;
-        return mController.onDismissMoreKeysPanel();
+    public void dismissMoreKeysPanel() {
+        if (!isShowingInParent()) {
+            return;
+        }
+        mController.onDismissMoreKeysPanel(this);
     }
 
     @Override
@@ -196,12 +198,6 @@ public class MoreKeysKeyboardView extends KeyboardView implements MoreKeysPanel 
         final int x = (int)me.getX(index);
         final int y = (int)me.getY(index);
         final int pointerId = me.getPointerId(index);
-        processMotionEvent(action, x, y, pointerId, eventTime);
-        return true;
-    }
-
-    public void processMotionEvent(final int action, final int x, final int y,
-            final int pointerId, final long eventTime) {
         switch (action) {
         case MotionEvent.ACTION_DOWN:
         case MotionEvent.ACTION_POINTER_DOWN:
@@ -215,6 +211,7 @@ public class MoreKeysKeyboardView extends KeyboardView implements MoreKeysPanel 
             onMoveEvent(x, y, pointerId, eventTime);
             break;
         }
+        return true;
     }
 
     @Override

@@ -20,7 +20,7 @@
 #include <vector>
 
 #include "defines.h"
-#include "dic_node.h"
+#include "suggest/core/dicnode/dic_node.h"
 
 namespace latinime {
 
@@ -62,17 +62,15 @@ class DicNodeVector {
         mDicNodes.back().initAsPassingChild(dicNode);
     }
 
-    void pushLeavingChild(DicNode *dicNode, const int pos, const uint8_t flags,
-            const int childrenPos, const int attributesPos, const int siblingPos,
-            const int nodeCodePoint, const int childrenCount, const int probability,
-            const int bigramProbability, const bool isTerminal, const bool hasMultipleChars,
-            const bool hasChildren, const uint16_t additionalSubwordLength,
-            const int *additionalSubword) {
+    void pushLeavingChild(const DicNode *const dicNode, const int pos, const int childrenPos,
+            const int probability, const bool isTerminal, const bool hasChildren,
+            const bool isBlacklistedOrNotAWord, const uint16_t mergedNodeCodePointCount,
+            const int *const mergedNodeCodePoints) {
         ASSERT(!mLock);
         mDicNodes.push_back(mEmptyNode);
-        mDicNodes.back().initAsChild(dicNode, pos, flags, childrenPos, attributesPos, siblingPos,
-                nodeCodePoint, childrenCount, probability, -1 /* bigramProbability */, isTerminal,
-                hasMultipleChars, hasChildren, additionalSubwordLength, additionalSubword);
+        mDicNodes.back().initAsChild(dicNode, pos, childrenPos, probability, isTerminal,
+                hasChildren, isBlacklistedOrNotAWord, mergedNodeCodePointCount,
+                mergedNodeCodePoints);
     }
 
     DicNode *operator[](const int id) {

@@ -28,10 +28,15 @@ import android.text.TextUtils;
 import android.util.Log;
 
 import com.android.inputmethod.dictionarypack.DictionaryPackConstants;
-import com.android.inputmethod.latin.DictionaryInfoUtils.DictionaryInfo;
+import com.android.inputmethod.latin.utils.CollectionUtils;
+import com.android.inputmethod.latin.utils.DictionaryInfoUtils;
+import com.android.inputmethod.latin.utils.DictionaryInfoUtils.DictionaryInfo;
+import com.android.inputmethod.latin.utils.FileTransforms;
+import com.android.inputmethod.latin.utils.MetadataFileUriGetter;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
+import java.io.Closeable;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
@@ -304,6 +309,7 @@ public final class BinaryDictionaryFileDumper {
                     Log.e(TAG, "Could not have the dictionary pack delete a word list");
                 }
                 BinaryDictionaryGetter.removeFilesWithIdExcept(context, wordlistId, finalFile);
+                Log.e(TAG, "Successfully copied file for wordlist ID " + wordlistId);
                 // Success! Close files (through the finally{} clause) and return.
                 return;
             } catch (Exception e) {
@@ -319,20 +325,12 @@ public final class BinaryDictionaryFileDumper {
                 // Try the next method.
             } finally {
                 // Ignore exceptions while closing files.
-                try {
-                    if (null != afd) afd.close();
-                    if (null != inputStream) inputStream.close();
-                    if (null != uncompressedStream) uncompressedStream.close();
-                    if (null != decryptedStream) decryptedStream.close();
-                    if (null != bufferedInputStream) bufferedInputStream.close();
-                } catch (Exception e) {
-                    Log.e(TAG, "Exception while closing a file descriptor", e);
-                }
-                try {
-                    if (null != bufferedOutputStream) bufferedOutputStream.close();
-                } catch (Exception e) {
-                    Log.e(TAG, "Exception while closing a file", e);
-                }
+                closeAssetFileDescriptorAndReportAnyException(afd);
+                closeCloseableAndReportAnyException(inputStream);
+                closeCloseableAndReportAnyException(uncompressedStream);
+                closeCloseableAndReportAnyException(decryptedStream);
+                closeCloseableAndReportAnyException(bufferedInputStream);
+                closeCloseableAndReportAnyException(bufferedOutputStream);
             }
         }
 
@@ -352,6 +350,26 @@ public final class BinaryDictionaryFileDumper {
         }
     }
 
+    // Ideally the two following methods should be merged, but AssetFileDescriptor does not
+    // implement Closeable although it does implement #close(), and Java does not have
+    // structural typing.
+    private static void closeAssetFileDescriptorAndReportAnyException(
+            final AssetFileDescriptor file) {
+        try {
+            if (null != file) file.close();
+        } catch (Exception e) {
+            Log.e(TAG, "Exception while closing a file", e);
+        }
+    }
+
+    private static void closeCloseableAndReportAnyException(final Closeable file) {
+        try {
+            if (null != file) file.close();
+        } catch (Exception e) {
+            Log.e(TAG, "Exception while closing a file", e);
+        }
+    }
+
     /**
      * Queries a content provider for word list data for some locale and cache the returned files
      *
@@ -363,8 +381,14 @@ public final class BinaryDictionaryFileDumper {
      */
     public static void cacheWordListsFromContentProvider(final Locale locale,
             final Context context, final boolean hasDefaultWordList) {
-        final ContentProviderClient providerClient = context.getContentResolver().
+        final ContentProviderClient providerClient;
+        try {
+            providerClient = context.getContentResolver().
                 acquireContentProviderClient(getProviderUriBuilder("").build());
+        } catch (final SecurityException e) {
+            Log.e(TAG, "No permission to communicate with the dictionary provider", e);
+            return;
+        }
         if (null == providerClient) {
             Log.e(TAG, "Can't establish communication with the dictionary provider");
             return;
@@ -417,7 +441,6 @@ public final class BinaryDictionaryFileDumper {
             final ContentProviderClient client, final String clientId) throws RemoteException {
         final String metadataFileUri = MetadataFileUriGetter.getMetadataUri(context);
         final String metadataAdditionalId = MetadataFileUriGetter.getMetadataAdditionalId(context);
-        if (TextUtils.isEmpty(metadataFileUri)) return;
         // Tell the content provider to reset all information about this client id
         final Uri metadataContentUri = getProviderUriBuilder(clientId)
                 .appendPath(QUERY_PATH_METADATA)

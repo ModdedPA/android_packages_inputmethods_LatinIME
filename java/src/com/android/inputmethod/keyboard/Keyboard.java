@@ -21,8 +21,8 @@ import android.util.SparseArray;
 import com.android.inputmethod.keyboard.internal.KeyVisualAttributes;
 import com.android.inputmethod.keyboard.internal.KeyboardIconsSet;
 import com.android.inputmethod.keyboard.internal.KeyboardParams;
-import com.android.inputmethod.latin.CollectionUtils;
 import com.android.inputmethod.latin.Constants;
+import com.android.inputmethod.latin.utils.CollectionUtils;
 
 /**
  * Loads an XML description of a keyboard and stores the attributes of the keys. A keyboard
@@ -51,6 +51,11 @@ public class Keyboard {
     /** Total width of the keyboard, including the padding and keys */
     public final int mOccupiedWidth;
 
+    /** Base height of the keyboard, used to calculate rows' height */
+    public final int mBaseHeight;
+    /** Base width of the keyboard, used to calculate keys' width */
+    public final int mBaseWidth;
+
     /** The padding above the keyboard */
     public final int mTopPadding;
     /** Default gap between rows */
@@ -69,7 +74,7 @@ public class Keyboard {
     public final int mMaxMoreKeysKeyboardColumn;
 
     /** Array of keys and icons in this keyboard */
-    public final Key[] mKeys;
+    private final Key[] mKeys;
     public final Key[] mShiftKeys;
     public final Key[] mAltCodeKeysWhileTyping;
     public final KeyboardIconsSet mIconsSet;
@@ -84,6 +89,8 @@ public class Keyboard {
         mThemeId = params.mThemeId;
         mOccupiedHeight = params.mOccupiedHeight;
         mOccupiedWidth = params.mOccupiedWidth;
+        mBaseHeight = params.mBaseHeight;
+        mBaseWidth = params.mBaseWidth;
         mMostCommonKeyHeight = params.mMostCommonKeyHeight;
         mMostCommonKeyWidth = params.mMostCommonKeyWidth;
         mMoreKeysTemplate = params.mMoreKeysTemplate;
@@ -104,6 +111,30 @@ public class Keyboard {
         mProximityCharsCorrectionEnabled = params.mProximityCharsCorrectionEnabled;
     }
 
+    protected Keyboard(final Keyboard keyboard) {
+        mId = keyboard.mId;
+        mThemeId = keyboard.mThemeId;
+        mOccupiedHeight = keyboard.mOccupiedHeight;
+        mOccupiedWidth = keyboard.mOccupiedWidth;
+        mBaseHeight = keyboard.mBaseHeight;
+        mBaseWidth = keyboard.mBaseWidth;
+        mMostCommonKeyHeight = keyboard.mMostCommonKeyHeight;
+        mMostCommonKeyWidth = keyboard.mMostCommonKeyWidth;
+        mMoreKeysTemplate = keyboard.mMoreKeysTemplate;
+        mMaxMoreKeysKeyboardColumn = keyboard.mMaxMoreKeysKeyboardColumn;
+        mKeyVisualAttributes = keyboard.mKeyVisualAttributes;
+        mTopPadding = keyboard.mTopPadding;
+        mVerticalGap = keyboard.mVerticalGap;
+
+        mKeys = keyboard.mKeys;
+        mShiftKeys = keyboard.mShiftKeys;
+        mAltCodeKeysWhileTyping = keyboard.mAltCodeKeysWhileTyping;
+        mIconsSet = keyboard.mIconsSet;
+
+        mProximityInfo = keyboard.mProximityInfo;
+        mProximityCharsCorrectionEnabled = keyboard.mProximityCharsCorrectionEnabled;
+    }
+
     public boolean hasProximityCharsCorrection(final int code) {
         if (!mProximityCharsCorrectionEnabled) {
             return false;
@@ -120,6 +151,19 @@ public class Keyboard {
         return mProximityInfo;
     }
 
+    public Key[] getKeys() {
+        return mKeys;
+    }
+
+    public Key getKeyFromOutputText(final String outputText) {
+        for (final Key key : getKeys()) {
+            if (outputText.equals(key.getOutputText())) {
+                return key;
+            }
+        }
+        return null;
+    }
+
     public Key getKey(final int code) {
         if (code == Constants.CODE_UNSPECIFIED) {
             return null;
@@ -130,8 +174,8 @@ public class Keyboard {
                 return mKeyCache.valueAt(index);
             }
 
-            for (final Key key : mKeys) {
-                if (key.mCode == code) {
+            for (final Key key : getKeys()) {
+                if (key.getCode() == code) {
                     mKeyCache.put(code, key);
                     return key;
                 }
@@ -146,9 +190,9 @@ public class Keyboard {
             return true;
         }
 
-        for (final Key key : mKeys) {
+        for (final Key key : getKeys()) {
             if (key == aKey) {
-                mKeyCache.put(key.mCode, key);
+                mKeyCache.put(key.getCode(), key);
                 return true;
             }
         }

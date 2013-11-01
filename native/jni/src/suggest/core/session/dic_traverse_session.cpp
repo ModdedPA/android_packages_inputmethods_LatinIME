@@ -16,68 +16,36 @@
 
 #include "suggest/core/session/dic_traverse_session.h"
 
-#include "binary_format.h"
 #include "defines.h"
-#include "dictionary.h"
-#include "dic_traverse_wrapper.h"
-#include "jni.h"
-#include "suggest/core/dicnode/dic_node_utils.h"
+#include "suggest/core/dictionary/dictionary.h"
+#include "suggest/core/policy/dictionary_header_structure_policy.h"
+#include "suggest/core/policy/dictionary_structure_with_buffer_policy.h"
 
 namespace latinime {
 
-const int DicTraverseSession::CACHE_START_INPUT_LENGTH_THRESHOLD = 20;
-
-// A factory method for DicTraverseSession
-static void *getSessionInstance(JNIEnv *env, jstring localeStr) {
-    return new DicTraverseSession(env, localeStr);
-}
-
-// TODO: Pass "DicTraverseSession *traverseSession" when the source code structure settles down.
-static void initSessionInstance(void *traverseSession, const Dictionary *const dictionary,
-        const int *prevWord, const int prevWordLength) {
-    if (traverseSession) {
-        DicTraverseSession *tSession = static_cast<DicTraverseSession *>(traverseSession);
-        tSession->init(dictionary, prevWord, prevWordLength);
-    }
-}
-
-// TODO: Pass "DicTraverseSession *traverseSession" when the source code structure settles down.
-static void releaseSessionInstance(void *traverseSession) {
-    delete static_cast<DicTraverseSession *>(traverseSession);
-}
-
-// An ad-hoc internal class to register the factory method defined above
-class TraverseSessionFactoryRegisterer {
- public:
-    TraverseSessionFactoryRegisterer() {
-        DicTraverseWrapper::setTraverseSessionFactoryMethod(getSessionInstance);
-        DicTraverseWrapper::setTraverseSessionInitMethod(initSessionInstance);
-        DicTraverseWrapper::setTraverseSessionReleaseMethod(releaseSessionInstance);
-    }
- private:
-    DISALLOW_COPY_AND_ASSIGN(TraverseSessionFactoryRegisterer);
-};
-
-// To invoke the TraverseSessionFactoryRegisterer constructor in the global constructor.
-static TraverseSessionFactoryRegisterer traverseSessionFactoryRegisterer;
+// 256K bytes threshold is heuristically used to distinguish dictionaries containing many unigrams
+// (e.g. main dictionary) from small dictionaries (e.g. contacts...)
+const int DicTraverseSession::DICTIONARY_SIZE_THRESHOLD_TO_USE_LARGE_CACHE_FOR_SUGGESTION =
+        256 * 1024;
 
 void DicTraverseSession::init(const Dictionary *const dictionary, const int *prevWord,
-        int prevWordLength) {
+        int prevWordLength, const SuggestOptions *const suggestOptions) {
     mDictionary = dictionary;
-    mMultiWordCostMultiplier = BinaryFormat::getMultiWordCostMultiplier(mDictionary->getDict(),
-            mDictionary->getDictSize());
+    mMultiWordCostMultiplier = getDictionaryStructurePolicy()->getHeaderStructurePolicy()
+            ->getMultiWordCostMultiplier();
+    mSuggestOptions = suggestOptions;
     if (!prevWord) {
-        mPrevWordPos = NOT_VALID_WORD;
+        mPrevWordPos = NOT_A_DICT_POS;
         return;
     }
     // TODO: merge following similar calls to getTerminalPosition into one case-insensitive call.
-    mPrevWordPos = BinaryFormat::getTerminalPosition(dictionary->getOffsetDict(), prevWord,
-            prevWordLength, false /* forceLowerCaseSearch */);
-    if (mPrevWordPos == NOT_VALID_WORD) {
+    mPrevWordPos = getDictionaryStructurePolicy()->getTerminalNodePositionOfWord(
+            prevWord, prevWordLength, false /* forceLowerCaseSearch */);
+    if (mPrevWordPos == NOT_A_DICT_POS) {
         // Check bigrams for lower-cased previous word if original was not found. Useful for
         // auto-capitalized words like "The [current_word]".
-        mPrevWordPos = BinaryFormat::getTerminalPosition(dictionary->getOffsetDict(), prevWord,
-                prevWordLength, true /* forceLowerCaseSearch */);
+        mPrevWordPos = getDictionaryStructurePolicy()->getTerminalNodePositionOfWord(
+                prevWord, prevWordLength, true /* forceLowerCaseSearch */);
     }
 }
 
@@ -91,16 +59,14 @@ void DicTraverseSession::setupForGetSuggestions(const ProximityInfo *pInfo,
             maxSpatialDistance, maxPointerCount);
 }
 
-const uint8_t *DicTraverseSession::getOffsetDict() const {
-    return mDictionary->getOffsetDict();
+const DictionaryStructureWithBufferPolicy *DicTraverseSession::getDictionaryStructurePolicy()
+        const {
+    return mDictionary->getDictionaryStructurePolicy();
 }
 
-int DicTraverseSession::getDictFlags() const {
-    return mDictionary->getDictFlags();
-}
-
-void DicTraverseSession::resetCache(const int nextActiveCacheSize, const int maxWords) {
-    mDicNodesCache.reset(nextActiveCacheSize, maxWords);
+void DicTraverseSession::resetCache(const int thresholdForNextActiveDicNodes, const int maxWords) {
+    mDicNodesCache.reset(thresholdForNextActiveDicNodes /* nextActiveSize */,
+            maxWords /* terminalSize */);
     mMultiBigramMap.clear();
     mPartiallyCommited = false;
 }

@@ -34,25 +34,33 @@ import java.util.LinkedList;
 public final class FusionDictionary implements Iterable<Word> {
     private static final boolean DBG = MakedictLog.DBG;
 
+    private static int CHARACTER_NOT_FOUND_INDEX = -1;
+
     /**
-     * A node of the dictionary, containing several CharGroups.
+     * A node array of the dictionary, containing several PtNodes.
      *
-     * A node is but an ordered array of CharGroups, which essentially contain all the
+     * A PtNodeArray is but an ordered array of PtNodes, which essentially contain all the
      * real information.
      * This class also contains fields to cache size and address, to help with binary
      * generation.
      */
-    public static final class Node {
-        ArrayList<CharGroup> mData;
+    public static final class PtNodeArray {
+        ArrayList<PtNode> mData;
         // To help with binary generation
         int mCachedSize = Integer.MIN_VALUE;
-        int mCachedAddress = Integer.MIN_VALUE;
+        // mCachedAddressBefore/AfterUpdate are helpers for binary dictionary generation. They
+        // always hold the same value except between dictionary address compression, during which
+        // the update process needs to know about both values at the same time. Updating will
+        // update the AfterUpdate value, and the code will move them to BeforeUpdate before
+        // the next update pass.
+        int mCachedAddressBeforeUpdate = Integer.MIN_VALUE;
+        int mCachedAddressAfterUpdate = Integer.MIN_VALUE;
         int mCachedParentAddress = 0;
 
-        public Node() {
-            mData = new ArrayList<CharGroup>();
+        public PtNodeArray() {
+            mData = new ArrayList<PtNode>();
         }
-        public Node(ArrayList<CharGroup> data) {
+        public PtNodeArray(ArrayList<PtNode> data) {
             mData = data;
         }
     }
@@ -85,35 +93,44 @@ public final class FusionDictionary implements Iterable<Word> {
     }
 
     /**
-     * A group of characters, with a frequency, shortcut targets, bigrams, and children.
+     * PtNode is a group of characters, with a frequency, shortcut targets, bigrams, and children
+     * (Pt means Patricia Trie).
      *
-     * This is the central class of the in-memory representation. A CharGroup is what can
+     * This is the central class of the in-memory representation. A PtNode is what can
      * be seen as a traditional "trie node", except it can hold several characters at the
-     * same time. A CharGroup essentially represents one or several characters in the middle
-     * of the trie trie; as such, it can be a terminal, and it can have children.
-     * In this in-memory representation, whether the CharGroup is a terminal or not is represented
+     * same time. A PtNode essentially represents one or several characters in the middle
+     * of the trie tree; as such, it can be a terminal, and it can have children.
+     * In this in-memory representation, whether the PtNode is a terminal or not is represented
      * in the frequency, where NOT_A_TERMINAL (= -1) means this is not a terminal and any other
      * value is the frequency of this terminal. A terminal may have non-null shortcuts and/or
      * bigrams, but a non-terminal may not. Moreover, children, if present, are null.
      */
-    public static final class CharGroup {
+    public static final class PtNode {
         public static final int NOT_A_TERMINAL = -1;
         final int mChars[];
         ArrayList<WeightedString> mShortcutTargets;
         ArrayList<WeightedString> mBigrams;
         int mFrequency; // NOT_A_TERMINAL == mFrequency indicates this is not a terminal.
-        Node mChildren;
+        int mTerminalId; // NOT_A_TERMINAL == mTerminalId indicates this is not a terminal.
+        PtNodeArray mChildren;
         boolean mIsNotAWord; // Only a shortcut
         boolean mIsBlacklistEntry;
-        // The two following members to help with binary generation
-        int mCachedSize;
-        int mCachedAddress;
+        // mCachedSize and mCachedAddressBefore/AfterUpdate are helpers for binary dictionary
+        // generation. Before and After always hold the same value except during dictionary
+        // address compression, where the update process needs to know about both values at the
+        // same time. Updating will update the AfterUpdate value, and the code will move them
+        // to BeforeUpdate before the next update pass.
+        // The update process does not need two versions of mCachedSize.
+        int mCachedSize; // The size, in bytes, of this PtNode.
+        int mCachedAddressBeforeUpdate; // The address of this PtNode (before update)
+        int mCachedAddressAfterUpdate; // The address of this PtNode (after update)
 
-        public CharGroup(final int[] chars, final ArrayList<WeightedString> shortcutTargets,
+        public PtNode(final int[] chars, final ArrayList<WeightedString> shortcutTargets,
                 final ArrayList<WeightedString> bigrams, final int frequency,
                 final boolean isNotAWord, final boolean isBlacklistEntry) {
             mChars = chars;
             mFrequency = frequency;
+            mTerminalId = frequency;
             mShortcutTargets = shortcutTargets;
             mBigrams = bigrams;
             mChildren = null;
@@ -121,9 +138,10 @@ public final class FusionDictionary implements Iterable<Word> {
             mIsBlacklistEntry = isBlacklistEntry;
         }
 
-        public CharGroup(final int[] chars, final ArrayList<WeightedString> shortcutTargets,
+        public PtNode(final int[] chars, final ArrayList<WeightedString> shortcutTargets,
                 final ArrayList<WeightedString> bigrams, final int frequency,
-                final boolean isNotAWord, final boolean isBlacklistEntry, final Node children) {
+                final boolean isNotAWord, final boolean isBlacklistEntry,
+                final PtNodeArray children) {
             mChars = chars;
             mFrequency = frequency;
             mShortcutTargets = shortcutTargets;
@@ -133,11 +151,15 @@ public final class FusionDictionary implements Iterable<Word> {
             mIsBlacklistEntry = isBlacklistEntry;
         }
 
-        public void addChild(CharGroup n) {
+        public void addChild(PtNode n) {
             if (null == mChildren) {
-                mChildren = new Node();
+                mChildren = new PtNodeArray();
             }
             mChildren.mData.add(n);
+        }
+
+        public int getTerminalId() {
+            return mTerminalId;
         }
 
         public boolean isTerminal() {
@@ -230,7 +252,7 @@ public final class FusionDictionary implements Iterable<Word> {
         }
 
         /**
-         * Updates the CharGroup with the given properties. Adds the shortcut and bigram lists to
+         * Updates the PtNode with the given properties. Adds the shortcut and bigram lists to
          * the existing ones if any. Note: unigram, bigram, and shortcut frequencies are only
          * updated if they are higher than the existing ones.
          */
@@ -330,10 +352,10 @@ public final class FusionDictionary implements Iterable<Word> {
     }
 
     public final DictionaryOptions mOptions;
-    public final Node mRoot;
+    public final PtNodeArray mRootNodeArray;
 
-    public FusionDictionary(final Node root, final DictionaryOptions options) {
-        mRoot = root;
+    public FusionDictionary(final PtNodeArray rootNodeArray, final DictionaryOptions options) {
+        mRootNodeArray = rootNodeArray;
         mOptions = options;
     }
 
@@ -345,10 +367,11 @@ public final class FusionDictionary implements Iterable<Word> {
      * Helper method to convert a String to an int array.
      */
     static int[] getCodePoints(final String word) {
-        // TODO: this is a copy-paste of the contents of StringUtils.toCodePointArray,
+        // TODO: this is a copy-paste of the old contents of StringUtils.toCodePointArray,
         // which is not visible from the makedict package. Factor this code.
+        final int length = word.length();
+        if (length <= 0) return new int[] {};
         final char[] characters = word.toCharArray();
-        final int length = characters.length;
         final int[] codePoints = new int[Character.codePointCount(characters, 0, length)];
         int codePoint = Character.codePointAt(characters, 0);
         int dsti = 0;
@@ -392,13 +415,13 @@ public final class FusionDictionary implements Iterable<Word> {
     }
 
     /**
-     * Sanity check for a node.
+     * Sanity check for a PtNode array.
      *
-     * This method checks that all CharGroups in a node are ordered as expected.
+     * This method checks that all PtNodes in a node array are ordered as expected.
      * If they are, nothing happens. If they aren't, an exception is thrown.
      */
-    private void checkStack(Node node) {
-        ArrayList<CharGroup> stack = node.mData;
+    private void checkStack(PtNodeArray ptNodeArray) {
+        ArrayList<PtNode> stack = ptNodeArray.mData;
         int lastValue = -1;
         for (int i = 0; i < stack.size(); ++i) {
             int currentValue = stack.get(i).mChars[0];
@@ -417,18 +440,18 @@ public final class FusionDictionary implements Iterable<Word> {
      * @param frequency the bigram frequency
      */
     public void setBigram(final String word1, final String word2, final int frequency) {
-        CharGroup charGroup = findWordInTree(mRoot, word1);
-        if (charGroup != null) {
-            final CharGroup charGroup2 = findWordInTree(mRoot, word2);
-            if (charGroup2 == null) {
+        PtNode ptNode = findWordInTree(mRootNodeArray, word1);
+        if (ptNode != null) {
+            final PtNode ptNode2 = findWordInTree(mRootNodeArray, word2);
+            if (ptNode2 == null) {
                 add(getCodePoints(word2), 0, null, false /* isNotAWord */,
                         false /* isBlacklistEntry */);
-                // The chargroup for the first word may have moved by the above insertion,
+                // The PtNode for the first word may have moved by the above insertion,
                 // if word1 and word2 share a common stem that happens not to have been
-                // a cutting point until now. In this case, we need to refresh charGroup.
-                charGroup = findWordInTree(mRoot, word1);
+                // a cutting point until now. In this case, we need to refresh ptNode.
+                ptNode = findWordInTree(mRootNodeArray, word1);
             }
-            charGroup.addBigram(word2, frequency);
+            ptNode.addBigram(word2, frequency);
         } else {
             throw new RuntimeException("First word of bigram not found");
         }
@@ -450,97 +473,96 @@ public final class FusionDictionary implements Iterable<Word> {
             final ArrayList<WeightedString> shortcutTargets,
             final boolean isNotAWord, final boolean isBlacklistEntry) {
         assert(frequency >= 0 && frequency <= 255);
-        if (word.length >= Constants.Dictionary.MAX_WORD_LENGTH) {
+        if (word.length >= Constants.DICTIONARY_MAX_WORD_LENGTH) {
             MakedictLog.w("Ignoring a word that is too long: word.length = " + word.length);
             return;
         }
 
-        Node currentNode = mRoot;
+        PtNodeArray currentNodeArray = mRootNodeArray;
         int charIndex = 0;
 
-        CharGroup currentGroup = null;
+        PtNode currentPtNode = null;
         int differentCharIndex = 0; // Set by the loop to the index of the char that differs
-        int nodeIndex = findIndexOfChar(mRoot, word[charIndex]);
-        while (CHARACTER_NOT_FOUND != nodeIndex) {
-            currentGroup = currentNode.mData.get(nodeIndex);
-            differentCharIndex = compareArrays(currentGroup.mChars, word, charIndex);
+        int nodeIndex = findIndexOfChar(mRootNodeArray, word[charIndex]);
+        while (CHARACTER_NOT_FOUND_INDEX != nodeIndex) {
+            currentPtNode = currentNodeArray.mData.get(nodeIndex);
+            differentCharIndex = compareCharArrays(currentPtNode.mChars, word, charIndex);
             if (ARRAYS_ARE_EQUAL != differentCharIndex
-                    && differentCharIndex < currentGroup.mChars.length) break;
-            if (null == currentGroup.mChildren) break;
-            charIndex += currentGroup.mChars.length;
+                    && differentCharIndex < currentPtNode.mChars.length) break;
+            if (null == currentPtNode.mChildren) break;
+            charIndex += currentPtNode.mChars.length;
             if (charIndex >= word.length) break;
-            currentNode = currentGroup.mChildren;
-            nodeIndex = findIndexOfChar(currentNode, word[charIndex]);
+            currentNodeArray = currentPtNode.mChildren;
+            nodeIndex = findIndexOfChar(currentNodeArray, word[charIndex]);
         }
 
-        if (-1 == nodeIndex) {
+        if (CHARACTER_NOT_FOUND_INDEX == nodeIndex) {
             // No node at this point to accept the word. Create one.
-            final int insertionIndex = findInsertionIndex(currentNode, word[charIndex]);
-            final CharGroup newGroup = new CharGroup(
-                    Arrays.copyOfRange(word, charIndex, word.length),
+            final int insertionIndex = findInsertionIndex(currentNodeArray, word[charIndex]);
+            final PtNode newPtNode = new PtNode(Arrays.copyOfRange(word, charIndex, word.length),
                     shortcutTargets, null /* bigrams */, frequency, isNotAWord, isBlacklistEntry);
-            currentNode.mData.add(insertionIndex, newGroup);
-            if (DBG) checkStack(currentNode);
+            currentNodeArray.mData.add(insertionIndex, newPtNode);
+            if (DBG) checkStack(currentNodeArray);
         } else {
             // There is a word with a common prefix.
-            if (differentCharIndex == currentGroup.mChars.length) {
+            if (differentCharIndex == currentPtNode.mChars.length) {
                 if (charIndex + differentCharIndex >= word.length) {
                     // The new word is a prefix of an existing word, but the node on which it
-                    // should end already exists as is. Since the old CharNode was not a terminal,
+                    // should end already exists as is. Since the old PtNode was not a terminal,
                     // make it one by filling in its frequency and other attributes
-                    currentGroup.update(frequency, shortcutTargets, null, isNotAWord,
+                    currentPtNode.update(frequency, shortcutTargets, null, isNotAWord,
                             isBlacklistEntry);
                 } else {
                     // The new word matches the full old word and extends past it.
                     // We only have to create a new node and add it to the end of this.
-                    final CharGroup newNode = new CharGroup(
+                    final PtNode newNode = new PtNode(
                             Arrays.copyOfRange(word, charIndex + differentCharIndex, word.length),
                                     shortcutTargets, null /* bigrams */, frequency, isNotAWord,
                                     isBlacklistEntry);
-                    currentGroup.mChildren = new Node();
-                    currentGroup.mChildren.mData.add(newNode);
+                    currentPtNode.mChildren = new PtNodeArray();
+                    currentPtNode.mChildren.mData.add(newNode);
                 }
             } else {
                 if (0 == differentCharIndex) {
                     // Exact same word. Update the frequency if higher. This will also add the
                     // new shortcuts to the existing shortcut list if it already exists.
-                    currentGroup.update(frequency, shortcutTargets, null,
-                            currentGroup.mIsNotAWord && isNotAWord,
-                            currentGroup.mIsBlacklistEntry || isBlacklistEntry);
+                    currentPtNode.update(frequency, shortcutTargets, null,
+                            currentPtNode.mIsNotAWord && isNotAWord,
+                            currentPtNode.mIsBlacklistEntry || isBlacklistEntry);
                 } else {
                     // Partial prefix match only. We have to replace the current node with a node
                     // containing the current prefix and create two new ones for the tails.
-                    Node newChildren = new Node();
-                    final CharGroup newOldWord = new CharGroup(
-                            Arrays.copyOfRange(currentGroup.mChars, differentCharIndex,
-                                    currentGroup.mChars.length), currentGroup.mShortcutTargets,
-                            currentGroup.mBigrams, currentGroup.mFrequency,
-                            currentGroup.mIsNotAWord, currentGroup.mIsBlacklistEntry,
-                            currentGroup.mChildren);
+                    PtNodeArray newChildren = new PtNodeArray();
+                    final PtNode newOldWord = new PtNode(
+                            Arrays.copyOfRange(currentPtNode.mChars, differentCharIndex,
+                                    currentPtNode.mChars.length), currentPtNode.mShortcutTargets,
+                            currentPtNode.mBigrams, currentPtNode.mFrequency,
+                            currentPtNode.mIsNotAWord, currentPtNode.mIsBlacklistEntry,
+                            currentPtNode.mChildren);
                     newChildren.mData.add(newOldWord);
 
-                    final CharGroup newParent;
+                    final PtNode newParent;
                     if (charIndex + differentCharIndex >= word.length) {
-                        newParent = new CharGroup(
-                                Arrays.copyOfRange(currentGroup.mChars, 0, differentCharIndex),
+                        newParent = new PtNode(
+                                Arrays.copyOfRange(currentPtNode.mChars, 0, differentCharIndex),
                                 shortcutTargets, null /* bigrams */, frequency,
                                 isNotAWord, isBlacklistEntry, newChildren);
                     } else {
-                        newParent = new CharGroup(
-                                Arrays.copyOfRange(currentGroup.mChars, 0, differentCharIndex),
+                        newParent = new PtNode(
+                                Arrays.copyOfRange(currentPtNode.mChars, 0, differentCharIndex),
                                 null /* shortcutTargets */, null /* bigrams */, -1,
                                 false /* isNotAWord */, false /* isBlacklistEntry */, newChildren);
-                        final CharGroup newWord = new CharGroup(Arrays.copyOfRange(word,
+                        final PtNode newWord = new PtNode(Arrays.copyOfRange(word,
                                 charIndex + differentCharIndex, word.length),
                                 shortcutTargets, null /* bigrams */, frequency,
                                 isNotAWord, isBlacklistEntry);
                         final int addIndex = word[charIndex + differentCharIndex]
-                                > currentGroup.mChars[differentCharIndex] ? 1 : 0;
+                                > currentPtNode.mChars[differentCharIndex] ? 1 : 0;
                         newChildren.mData.add(addIndex, newWord);
                     }
-                    currentNode.mData.set(nodeIndex, newParent);
+                    currentNodeArray.mData.set(nodeIndex, newParent);
                 }
-                if (DBG) checkStack(currentNode);
+                if (DBG) checkStack(currentNodeArray);
             }
         }
     }
@@ -562,7 +584,7 @@ public final class FusionDictionary implements Iterable<Word> {
      * @param dstOffset the offset in the right-hand side string.
      * @return the index at which the strings differ, or ARRAYS_ARE_EQUAL = 0 if they don't.
      */
-    private static int compareArrays(final int[] src, final int[] dst, int dstOffset) {
+    private static int compareCharArrays(final int[] src, final int[] dst, int dstOffset) {
         // We do NOT test the first char, because we come from a method that already
         // tested it.
         for (int i = 1; i < src.length; ++i) {
@@ -574,81 +596,81 @@ public final class FusionDictionary implements Iterable<Word> {
     }
 
     /**
-     * Helper class that compares and sorts two chargroups according to their
+     * Helper class that compares and sorts two PtNodes according to their
      * first element only. I repeat: ONLY the first element is considered, the rest
      * is ignored.
      * This comparator imposes orderings that are inconsistent with equals.
      */
-    static private final class CharGroupComparator implements java.util.Comparator<CharGroup> {
+    static private final class PtNodeComparator implements java.util.Comparator<PtNode> {
         @Override
-        public int compare(CharGroup c1, CharGroup c2) {
-            if (c1.mChars[0] == c2.mChars[0]) return 0;
-            return c1.mChars[0] < c2.mChars[0] ? -1 : 1;
+        public int compare(PtNode p1, PtNode p2) {
+            if (p1.mChars[0] == p2.mChars[0]) return 0;
+            return p1.mChars[0] < p2.mChars[0] ? -1 : 1;
         }
     }
-    final static private CharGroupComparator CHARGROUP_COMPARATOR = new CharGroupComparator();
+    final static private PtNodeComparator PTNODE_COMPARATOR = new PtNodeComparator();
 
     /**
-     * Finds the insertion index of a character within a node.
+     * Finds the insertion index of a character within a node array.
      */
-    private static int findInsertionIndex(final Node node, int character) {
-        final ArrayList<CharGroup> data = node.mData;
-        final CharGroup reference = new CharGroup(new int[] { character },
+    private static int findInsertionIndex(final PtNodeArray nodeArray, int character) {
+        final ArrayList<PtNode> data = nodeArray.mData;
+        final PtNode reference = new PtNode(new int[] { character },
                 null /* shortcutTargets */, null /* bigrams */, 0, false /* isNotAWord */,
                 false /* isBlacklistEntry */);
-        int result = Collections.binarySearch(data, reference, CHARGROUP_COMPARATOR);
+        int result = Collections.binarySearch(data, reference, PTNODE_COMPARATOR);
         return result >= 0 ? result : -result - 1;
     }
 
-    private static int CHARACTER_NOT_FOUND = -1;
-
     /**
-     * Find the index of a char in a node, if it exists.
+     * Find the index of a char in a node array, if it exists.
      *
-     * @param node the node to search in.
+     * @param nodeArray the node array to search in.
      * @param character the character to search for.
-     * @return the position of the character if it's there, or CHARACTER_NOT_FOUND = -1 else.
+     * @return the position of the character if it's there, or CHARACTER_NOT_FOUND_INDEX = -1 else.
      */
-    private static int findIndexOfChar(final Node node, int character) {
-        final int insertionIndex = findInsertionIndex(node, character);
-        if (node.mData.size() <= insertionIndex) return CHARACTER_NOT_FOUND;
-        return character == node.mData.get(insertionIndex).mChars[0] ? insertionIndex
-                : CHARACTER_NOT_FOUND;
+    private static int findIndexOfChar(final PtNodeArray nodeArray, int character) {
+        final int insertionIndex = findInsertionIndex(nodeArray, character);
+        if (nodeArray.mData.size() <= insertionIndex) return CHARACTER_NOT_FOUND_INDEX;
+        return character == nodeArray.mData.get(insertionIndex).mChars[0] ? insertionIndex
+                : CHARACTER_NOT_FOUND_INDEX;
     }
 
     /**
      * Helper method to find a word in a given branch.
      */
     @SuppressWarnings("unused")
-    public static CharGroup findWordInTree(Node node, final String string) {
+    public static PtNode findWordInTree(PtNodeArray nodeArray, final String string) {
         int index = 0;
         final StringBuilder checker = DBG ? new StringBuilder() : null;
         final int[] codePoints = getCodePoints(string);
 
-        CharGroup currentGroup;
+        PtNode currentPtNode;
         do {
-            int indexOfGroup = findIndexOfChar(node, codePoints[index]);
-            if (CHARACTER_NOT_FOUND == indexOfGroup) return null;
-            currentGroup = node.mData.get(indexOfGroup);
+            int indexOfGroup = findIndexOfChar(nodeArray, codePoints[index]);
+            if (CHARACTER_NOT_FOUND_INDEX == indexOfGroup) return null;
+            currentPtNode = nodeArray.mData.get(indexOfGroup);
 
-            if (codePoints.length - index < currentGroup.mChars.length) return null;
+            if (codePoints.length - index < currentPtNode.mChars.length) return null;
             int newIndex = index;
-            while (newIndex < codePoints.length && newIndex - index < currentGroup.mChars.length) {
-                if (currentGroup.mChars[newIndex - index] != codePoints[newIndex]) return null;
+            while (newIndex < codePoints.length && newIndex - index < currentPtNode.mChars.length) {
+                if (currentPtNode.mChars[newIndex - index] != codePoints[newIndex]) return null;
                 newIndex++;
             }
             index = newIndex;
 
-            if (DBG) checker.append(new String(currentGroup.mChars, 0, currentGroup.mChars.length));
-            if (index < codePoints.length) {
-                node = currentGroup.mChildren;
+            if (DBG) {
+                checker.append(new String(currentPtNode.mChars, 0, currentPtNode.mChars.length));
             }
-        } while (null != node && index < codePoints.length);
+            if (index < codePoints.length) {
+                nodeArray = currentPtNode.mChildren;
+            }
+        } while (null != nodeArray && index < codePoints.length);
 
         if (index < codePoints.length) return null;
-        if (!currentGroup.isTerminal()) return null;
+        if (!currentPtNode.isTerminal()) return null;
         if (DBG && !string.equals(checker.toString())) return null;
-        return currentGroup;
+        return currentPtNode;
     }
 
     /**
@@ -658,22 +680,22 @@ public final class FusionDictionary implements Iterable<Word> {
         if (null == s || "".equals(s)) {
             throw new RuntimeException("Can't search for a null or empty string");
         }
-        return null != findWordInTree(mRoot, s);
+        return null != findWordInTree(mRootNodeArray, s);
     }
 
     /**
-     * Recursively count the number of character groups in a given branch of the trie.
+     * Recursively count the number of PtNodes in a given branch of the trie.
      *
-     * @param node the parent node.
-     * @return the number of char groups in all the branch under this node.
+     * @param nodeArray the parent node.
+     * @return the number of PtNodes in all the branch under this node.
      */
-    public static int countCharGroups(final Node node) {
-        final int nodeSize = node.mData.size();
+    public static int countPtNodes(final PtNodeArray nodeArray) {
+        final int nodeSize = nodeArray.mData.size();
         int size = nodeSize;
         for (int i = nodeSize - 1; i >= 0; --i) {
-            CharGroup group = node.mData.get(i);
-            if (null != group.mChildren)
-                size += countCharGroups(group.mChildren);
+            PtNode ptNode = nodeArray.mData.get(i);
+            if (null != ptNode.mChildren)
+                size += countPtNodes(ptNode.mChildren);
         }
         return size;
     }
@@ -681,15 +703,15 @@ public final class FusionDictionary implements Iterable<Word> {
     /**
      * Recursively count the number of nodes in a given branch of the trie.
      *
-     * @param node the node to count.
+     * @param nodeArray the node array to count.
      * @return the number of nodes in this branch.
      */
-    public static int countNodes(final Node node) {
+    public static int countNodeArrays(final PtNodeArray nodeArray) {
         int size = 1;
-        for (int i = node.mData.size() - 1; i >= 0; --i) {
-            CharGroup group = node.mData.get(i);
-            if (null != group.mChildren)
-                size += countNodes(group.mChildren);
+        for (int i = nodeArray.mData.size() - 1; i >= 0; --i) {
+            PtNode ptNode = nodeArray.mData.get(i);
+            if (null != ptNode.mChildren)
+                size += countNodeArrays(ptNode.mChildren);
         }
         return size;
     }
@@ -697,12 +719,12 @@ public final class FusionDictionary implements Iterable<Word> {
     // Recursively find out whether there are any bigrams.
     // This can be pretty expensive especially if there aren't any (we return as soon
     // as we find one, so it's much cheaper if there are bigrams)
-    private static boolean hasBigramsInternal(final Node node) {
-        if (null == node) return false;
-        for (int i = node.mData.size() - 1; i >= 0; --i) {
-            CharGroup group = node.mData.get(i);
-            if (null != group.mBigrams) return true;
-            if (hasBigramsInternal(group.mChildren)) return true;
+    private static boolean hasBigramsInternal(final PtNodeArray nodeArray) {
+        if (null == nodeArray) return false;
+        for (int i = nodeArray.mData.size() - 1; i >= 0; --i) {
+            PtNode ptNode = nodeArray.mData.get(i);
+            if (null != ptNode.mBigrams) return true;
+            if (hasBigramsInternal(ptNode.mChildren)) return true;
         }
         return false;
     }
@@ -717,7 +739,7 @@ public final class FusionDictionary implements Iterable<Word> {
     // find a more efficient way of doing this, without compromising too much on memory
     // and ease of use.
     public boolean hasBigrams() {
-        return hasBigramsInternal(mRoot);
+        return hasBigramsInternal(mRootNodeArray);
     }
 
     // Historically, the tails of the words were going to be merged to save space.
@@ -735,16 +757,16 @@ public final class FusionDictionary implements Iterable<Word> {
         MakedictLog.i("Do not merge tails");
         return;
 
-//        MakedictLog.i("Merging nodes. Number of nodes : " + countNodes(root));
-//        MakedictLog.i("Number of groups : " + countCharGroups(root));
+//        MakedictLog.i("Merging PtNodes. Number of PtNodes : " + countPtNodes(root));
+//        MakedictLog.i("Number of PtNodes : " + countPtNodes(root));
 //
-//        final HashMap<String, ArrayList<Node>> repository =
-//                  new HashMap<String, ArrayList<Node>>();
+//        final HashMap<String, ArrayList<PtNodeArray>> repository =
+//                  new HashMap<String, ArrayList<PtNodeArray>>();
 //        mergeTailsInner(repository, root);
 //
 //        MakedictLog.i("Number of different pseudohashes : " + repository.size());
 //        int size = 0;
-//        for (ArrayList<Node> a : repository.values()) {
+//        for (ArrayList<PtNodeArray> a : repository.values()) {
 //            size += a.size();
 //        }
 //        MakedictLog.i("Number of nodes after merge : " + (1 + size));
@@ -752,58 +774,58 @@ public final class FusionDictionary implements Iterable<Word> {
     }
 
     // The following methods are used by the deactivated mergeTails()
-//   private static boolean isEqual(Node a, Node b) {
+//   private static boolean isEqual(PtNodeArray a, PtNodeArray b) {
 //       if (null == a && null == b) return true;
 //       if (null == a || null == b) return false;
 //       if (a.data.size() != b.data.size()) return false;
 //       final int size = a.data.size();
 //       for (int i = size - 1; i >= 0; --i) {
-//           CharGroup aGroup = a.data.get(i);
-//           CharGroup bGroup = b.data.get(i);
-//           if (aGroup.frequency != bGroup.frequency) return false;
-//           if (aGroup.alternates == null && bGroup.alternates != null) return false;
-//           if (aGroup.alternates != null && !aGroup.equals(bGroup.alternates)) return false;
-//           if (!Arrays.equals(aGroup.chars, bGroup.chars)) return false;
-//           if (!isEqual(aGroup.children, bGroup.children)) return false;
+//           PtNode aPtNode = a.data.get(i);
+//           PtNode bPtNode = b.data.get(i);
+//           if (aPtNode.frequency != bPtNode.frequency) return false;
+//           if (aPtNode.alternates == null && bPtNode.alternates != null) return false;
+//           if (aPtNode.alternates != null && !aPtNode.equals(bPtNode.alternates)) return false;
+//           if (!Arrays.equals(aPtNode.chars, bPtNode.chars)) return false;
+//           if (!isEqual(aPtNode.children, bPtNode.children)) return false;
 //       }
 //       return true;
 //   }
 
-//   static private HashMap<String, ArrayList<Node>> mergeTailsInner(
-//           final HashMap<String, ArrayList<Node>> map, final Node node) {
-//       final ArrayList<CharGroup> branches = node.data;
+//   static private HashMap<String, ArrayList<PtNodeArray>> mergeTailsInner(
+//           final HashMap<String, ArrayList<PtNodeArray>> map, final PtNodeArray nodeArray) {
+//       final ArrayList<PtNode> branches = nodeArray.data;
 //       final int nodeSize = branches.size();
 //       for (int i = 0; i < nodeSize; ++i) {
-//           CharGroup group = branches.get(i);
-//           if (null != group.children) {
-//               String pseudoHash = getPseudoHash(group.children);
-//               ArrayList<Node> similarList = map.get(pseudoHash);
+//           PtNode ptNode = branches.get(i);
+//           if (null != ptNode.children) {
+//               String pseudoHash = getPseudoHash(ptNode.children);
+//               ArrayList<PtNodeArray> similarList = map.get(pseudoHash);
 //               if (null == similarList) {
-//                   similarList = new ArrayList<Node>();
+//                   similarList = new ArrayList<PtNodeArray>();
 //                   map.put(pseudoHash, similarList);
 //               }
 //               boolean merged = false;
-//               for (Node similar : similarList) {
-//                   if (isEqual(group.children, similar)) {
-//                       group.children = similar;
+//               for (PtNodeArray similar : similarList) {
+//                   if (isEqual(ptNode.children, similar)) {
+//                       ptNode.children = similar;
 //                       merged = true;
 //                       break;
 //                   }
 //               }
 //               if (!merged) {
-//                   similarList.add(group.children);
+//                   similarList.add(ptNode.children);
 //               }
-//               mergeTailsInner(map, group.children);
+//               mergeTailsInner(map, ptNode.children);
 //           }
 //       }
 //       return map;
 //   }
 
-//  private static String getPseudoHash(final Node node) {
+//  private static String getPseudoHash(final PtNodeArray nodeArray) {
 //      StringBuilder s = new StringBuilder();
-//      for (CharGroup g : node.data) {
-//          s.append(g.frequency);
-//          for (int ch : g.chars) {
+//      for (PtNode ptNode : nodeArray.data) {
+//          s.append(ptNode.frequency);
+//          for (int ch : ptNode.chars) {
 //              s.append(Character.toChars(ch));
 //          }
 //      }
@@ -817,20 +839,20 @@ public final class FusionDictionary implements Iterable<Word> {
      */
     public static final class DictionaryIterator implements Iterator<Word> {
         private static final class Position {
-            public Iterator<CharGroup> pos;
+            public Iterator<PtNode> pos;
             public int length;
-            public Position(ArrayList<CharGroup> groups) {
-                pos = groups.iterator();
+            public Position(ArrayList<PtNode> ptNodes) {
+                pos = ptNodes.iterator();
                 length = 0;
             }
         }
         final StringBuilder mCurrentString;
         final LinkedList<Position> mPositions;
 
-        public DictionaryIterator(ArrayList<CharGroup> root) {
+        public DictionaryIterator(ArrayList<PtNode> ptRoot) {
             mCurrentString = new StringBuilder();
             mPositions = new LinkedList<Position>();
-            final Position rootPos = new Position(root);
+            final Position rootPos = new Position(ptRoot);
             mPositions.add(rootPos);
         }
 
@@ -851,20 +873,20 @@ public final class FusionDictionary implements Iterable<Word> {
 
             do {
                 if (currentPos.pos.hasNext()) {
-                    final CharGroup currentGroup = currentPos.pos.next();
+                    final PtNode currentPtNode = currentPos.pos.next();
                     currentPos.length = mCurrentString.length();
-                    for (int i : currentGroup.mChars) {
+                    for (int i : currentPtNode.mChars) {
                         mCurrentString.append(Character.toChars(i));
                     }
-                    if (null != currentGroup.mChildren) {
-                        currentPos = new Position(currentGroup.mChildren.mData);
+                    if (null != currentPtNode.mChildren) {
+                        currentPos = new Position(currentPtNode.mChildren.mData);
                         currentPos.length = mCurrentString.length();
                         mPositions.addLast(currentPos);
                     }
-                    if (currentGroup.mFrequency >= 0) {
-                        return new Word(mCurrentString.toString(), currentGroup.mFrequency,
-                                currentGroup.mShortcutTargets, currentGroup.mBigrams,
-                                currentGroup.mIsNotAWord, currentGroup.mIsBlacklistEntry);
+                    if (currentPtNode.mFrequency >= 0) {
+                        return new Word(mCurrentString.toString(), currentPtNode.mFrequency,
+                                currentPtNode.mShortcutTargets, currentPtNode.mBigrams,
+                                currentPtNode.mIsNotAWord, currentPtNode.mIsBlacklistEntry);
                     }
                 } else {
                     mPositions.removeLast();
@@ -889,6 +911,6 @@ public final class FusionDictionary implements Iterable<Word> {
      */
     @Override
     public Iterator<Word> iterator() {
-        return new DictionaryIterator(mRoot.mData);
+        return new DictionaryIterator(mRootNodeArray.mData);
     }
 }

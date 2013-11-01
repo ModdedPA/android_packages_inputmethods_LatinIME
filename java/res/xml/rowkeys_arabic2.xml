@@ -59,20 +59,18 @@
         latin:moreKeys="&#xFEFB;|&#x0644;&#x0627;,&#xFEF7;|&#x0644;&#x0623;,&#xFEF9;|&#x0644;&#x0625;,&#xFEF5;|&#x0644;&#x0622;"
         latin:keyLabelFlags="fontNormal" />
     <!-- U+0627: "ا" ARABIC LETTER ALEF
+         U+0622: "آ" ARABIC LETTER ALEF WITH MADDA ABOVE
          U+0621: "ء" ARABIC LETTER HAMZA
-         U+0671: "ٱ" ARABIC LETTER ALEF WASLA
          U+0623: "أ" ARABIC LETTER ALEF WITH HAMZA ABOVE
          U+0625: "إ" ARABIC LETTER ALEF WITH HAMZA BELOW
-         U+0622: "آ" ARABIC LETTER ALEF WITH MADDA ABOVE -->
+         U+0671: "ٱ" ARABIC LETTER ALEF WASLA -->
     <Key
         latin:keyLabel="&#x0627;"
-        latin:moreKeys="&#x0621;,&#x0671;,&#x0623;,&#x0625;,&#x0622;"
+        latin:moreKeys="!fixedColumnOrder!5,&#x0622;,&#x0621;,&#x0623;,&#x0625;,&#x0671;"
         latin:keyLabelFlags="fontNormal" />
-    <!-- U+062A: "ت" ARABIC LETTER TEH
-         U+062B: "ﺙ" ARABIC LETTER THEH -->
+    <!-- U+062A: "ت" ARABIC LETTER TEH -->
     <Key
         latin:keyLabel="&#x062A;"
-        latin:moreKeys="&#x062B;"
         latin:keyLabelFlags="fontNormal" />
     <!-- U+0646: "ن" ARABIC LETTER NOON -->
     <Key
@@ -88,5 +86,9 @@
     <Key
         latin:keyLabel="&#x0643;"
         latin:moreKeys="&#x06AF;,&#x06A9;"
+        latin:keyLabelFlags="fontNormal" />
+    <!-- U+0637: "ط" ARABIC LETTER TAH -->
+    <Key
+        latin:keyLabel="&#x0637;"
         latin:keyLabelFlags="fontNormal" />
 </merge>

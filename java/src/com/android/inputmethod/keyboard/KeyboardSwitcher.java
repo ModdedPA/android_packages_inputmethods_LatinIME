@@ -20,7 +20,6 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.preference.PreferenceManager;
-import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.ContextThemeWrapper;
 import android.view.LayoutInflater;
@@ -29,18 +28,17 @@ import android.view.inputmethod.EditorInfo;
 
 import com.android.inputmethod.accessibility.AccessibleKeyboardViewProxy;
 import com.android.inputmethod.keyboard.KeyboardLayoutSet.KeyboardLayoutSetException;
-import com.android.inputmethod.keyboard.PointerTracker.TimerProxy;
 import com.android.inputmethod.keyboard.internal.KeyboardState;
-import com.android.inputmethod.latin.AudioAndHapticFeedbackManager;
 import com.android.inputmethod.latin.InputView;
 import com.android.inputmethod.latin.LatinIME;
 import com.android.inputmethod.latin.LatinImeLogger;
 import com.android.inputmethod.latin.R;
 import com.android.inputmethod.latin.RichInputMethodManager;
-import com.android.inputmethod.latin.Settings;
-import com.android.inputmethod.latin.SettingsValues;
 import com.android.inputmethod.latin.SubtypeSwitcher;
 import com.android.inputmethod.latin.WordComposer;
+import com.android.inputmethod.latin.settings.Settings;
+import com.android.inputmethod.latin.settings.SettingsValues;
+import com.android.inputmethod.latin.utils.ResourceUtils;
 
 public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
     private static final String TAG = KeyboardSwitcher.class.getSimpleName();
@@ -60,21 +58,17 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
     }
 
     private static final KeyboardTheme[] KEYBOARD_THEMES = {
-        new KeyboardTheme(0, R.style.KeyboardTheme),
-        new KeyboardTheme(1, R.style.KeyboardTheme_HighContrast),
-        new KeyboardTheme(6, R.style.KeyboardTheme_Stone),
-        new KeyboardTheme(7, R.style.KeyboardTheme_Stone_Bold),
-        new KeyboardTheme(8, R.style.KeyboardTheme_Gingerbread),
-        new KeyboardTheme(5, R.style.KeyboardTheme_IceCreamSandwich),
+        new KeyboardTheme(0, R.style.KeyboardTheme_ICS),
+        new KeyboardTheme(1, R.style.KeyboardTheme_GB),
     };
 
-    private final AudioAndHapticFeedbackManager mFeedbackManager =
-            AudioAndHapticFeedbackManager.getInstance();
     private SubtypeSwitcher mSubtypeSwitcher;
     private SharedPreferences mPrefs;
 
     private InputView mCurrentInputView;
+    private View mMainKeyboardFrame;
     private MainKeyboardView mKeyboardView;
+    private EmojiPalettesView mEmojiPalettesView;
     private LatinIME mLatinIME;
     private Resources mResources;
 
@@ -125,8 +119,9 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         } catch (NumberFormatException e) {
             // Format error, keyboard theme is default to 0.
         }
-        Log.w(TAG, "Illegal keyboard theme in preference: " + themeIndex + ", default to 0");
-        return KEYBOARD_THEMES[0];
+        Log.w(TAG, "Illegal keyboard theme in preference: " + themeIndex + ", default to "
+                + defaultIndex);
+        return KEYBOARD_THEMES[Integer.valueOf(defaultIndex)];
     }
 
     private void setContextThemeWrapper(final Context context, final KeyboardTheme keyboardTheme) {
@@ -141,17 +136,17 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         final KeyboardLayoutSet.Builder builder = new KeyboardLayoutSet.Builder(
                 mThemeContext, editorInfo);
         final Resources res = mThemeContext.getResources();
-        final DisplayMetrics dm = res.getDisplayMetrics();
-        builder.setScreenGeometry(dm.widthPixels, dm.heightPixels);
+        final int keyboardWidth = ResourceUtils.getDefaultKeyboardWidth(res);
+        final int keyboardHeight = ResourceUtils.getDefaultKeyboardHeight(res);
+        builder.setKeyboardGeometry(keyboardWidth, keyboardHeight);
         builder.setSubtype(mSubtypeSwitcher.getCurrentSubtype());
         builder.setOptions(
                 settingsValues.isVoiceKeyEnabled(editorInfo),
-                settingsValues.isVoiceKeyOnMain(),
+                true /* always show a voice key on the main keyboard */,
                 settingsValues.isLanguageSwitchKeyEnabled());
         mKeyboardLayoutSet = builder.build();
         try {
             mState.onLoadKeyboard();
-            mFeedbackManager.onSettingsChanged(settingsValues);
         } catch (KeyboardLayoutSetException e) {
             Log.w(TAG, "loading keyboard failed: " + e.mKeyboardId, e.getCause());
             LatinImeLogger.logOnException(e.mKeyboardId.toString(), e.getCause());
@@ -159,12 +154,8 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         }
     }
 
-    public void onRingerModeChanged() {
-        mFeedbackManager.onRingerModeChanged();
-    }
-
     public void saveKeyboardState() {
-        if (getKeyboard() != null) {
+        if (getKeyboard() != null || isShowingEmojiPalettes()) {
             mState.onSaveKeyboardState();
         }
     }
@@ -178,6 +169,8 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
     }
 
     private void setKeyboard(final Keyboard keyboard) {
+        // Make {@link MainKeyboardView} visible and hide {@link EmojiPalettesView}.
+        setMainKeyboardFrame();
         final MainKeyboardView keyboardView = mKeyboardView;
         final Keyboard oldKeyboard = keyboardView.getKeyboard();
         keyboardView.setKeyboard(keyboard);
@@ -217,9 +210,6 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
     }
 
     public void onPressKey(final int code, final boolean isSinglePointer) {
-        if (isVibrateAndSoundFeedbackRequired()) {
-            mFeedbackManager.hapticAndAudioFeedback(code, mKeyboardView);
-        }
         mState.onPressKey(code, isSinglePointer, mLatinIME.getCurrentAutoCapsState());
     }
 
@@ -267,6 +257,20 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         setKeyboard(mKeyboardLayoutSet.getKeyboard(KeyboardId.ELEMENT_SYMBOLS));
     }
 
+    private void setMainKeyboardFrame() {
+        mMainKeyboardFrame.setVisibility(View.VISIBLE);
+        mEmojiPalettesView.setVisibility(View.GONE);
+        mEmojiPalettesView.stopEmojiPalettes();
+    }
+
+    // Implements {@link KeyboardState.SwitchActions}.
+    @Override
+    public void setEmojiKeyboard() {
+        mMainKeyboardFrame.setVisibility(View.GONE);
+        mEmojiPalettesView.startEmojiPalettes();
+        mEmojiPalettesView.setVisibility(View.VISIBLE);
+    }
+
     // Implements {@link KeyboardState.SwitchActions}.
     @Override
     public void setSymbolsShiftedKeyboard() {
@@ -282,68 +286,27 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
 
     // Implements {@link KeyboardState.SwitchActions}.
     @Override
-    public void startDoubleTapTimer() {
+    public void startDoubleTapShiftKeyTimer() {
         final MainKeyboardView keyboardView = getMainKeyboardView();
         if (keyboardView != null) {
-            final TimerProxy timer = keyboardView.getTimerProxy();
-            timer.startDoubleTapTimer();
+            keyboardView.startDoubleTapShiftKeyTimer();
         }
     }
 
     // Implements {@link KeyboardState.SwitchActions}.
     @Override
-    public void cancelDoubleTapTimer() {
+    public void cancelDoubleTapShiftKeyTimer() {
         final MainKeyboardView keyboardView = getMainKeyboardView();
         if (keyboardView != null) {
-            final TimerProxy timer = keyboardView.getTimerProxy();
-            timer.cancelDoubleTapTimer();
+            keyboardView.cancelDoubleTapShiftKeyTimer();
         }
     }
 
     // Implements {@link KeyboardState.SwitchActions}.
     @Override
-    public boolean isInDoubleTapTimeout() {
+    public boolean isInDoubleTapShiftKeyTimeout() {
         final MainKeyboardView keyboardView = getMainKeyboardView();
-        return (keyboardView != null)
-                ? keyboardView.getTimerProxy().isInDoubleTapTimeout() : false;
-    }
-
-    // Implements {@link KeyboardState.SwitchActions}.
-    @Override
-    public void startLongPressTimer(final int code) {
-        final MainKeyboardView keyboardView = getMainKeyboardView();
-        if (keyboardView != null) {
-            final TimerProxy timer = keyboardView.getTimerProxy();
-            timer.startLongPressTimer(code);
-        }
-    }
-
-    // Implements {@link KeyboardState.SwitchActions}.
-    @Override
-    public void cancelLongPressTimer() {
-        final MainKeyboardView keyboardView = getMainKeyboardView();
-        if (keyboardView != null) {
-            final TimerProxy timer = keyboardView.getTimerProxy();
-            timer.cancelLongPressTimer();
-        }
-    }
-
-    // Implements {@link KeyboardState.SwitchActions}.
-    @Override
-    public void hapticAndAudioFeedback(final int code) {
-        mFeedbackManager.hapticAndAudioFeedback(code, mKeyboardView);
-    }
-
-    public void onLongPressTimeout(final int code) {
-        mState.onLongPressTimeout(code);
-    }
-
-    public boolean isInMomentarySwitchState() {
-        return mState.isInMomentarySwitchState();
-    }
-
-    private boolean isVibrateAndSoundFeedbackRequired() {
-        return mKeyboardView != null && !mKeyboardView.isInSlidingKeyInput();
+        return keyboardView != null && keyboardView.isInDoubleTapShiftKeyTimeout();
     }
 
     /**
@@ -353,8 +316,44 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         mState.onCodeInput(code, mLatinIME.getCurrentAutoCapsState());
     }
 
+    private boolean isShowingMainKeyboard() {
+        return null != mKeyboardView && mKeyboardView.isShown();
+    }
+
+    public boolean isShowingEmojiPalettes() {
+        return mEmojiPalettesView != null && mEmojiPalettesView.isShown();
+    }
+
+    public boolean isShowingMoreKeysPanel() {
+        if (isShowingEmojiPalettes()) {
+            return false;
+        }
+        return mKeyboardView.isShowingMoreKeysPanel();
+    }
+
+    public View getVisibleKeyboardView() {
+        if (isShowingEmojiPalettes()) {
+            return mEmojiPalettesView;
+        }
+        return mKeyboardView;
+    }
+
     public MainKeyboardView getMainKeyboardView() {
         return mKeyboardView;
+    }
+
+    public void deallocateMemory() {
+        if (mKeyboardView != null) {
+            mKeyboardView.cancelAllOngoingEvents();
+            mKeyboardView.deallocateMemory();
+        }
+        if (mEmojiPalettesView != null) {
+            mEmojiPalettesView.stopEmojiPalettes();
+        }
+    }
+
+    public boolean isShowingMainKeyboardOrEmojiPalettes() {
+        return isShowingMainKeyboard() || isShowingEmojiPalettes();
     }
 
     public View onCreateInputView(final boolean isHardwareAcceleratedDrawingEnabled) {
@@ -365,13 +364,16 @@ public final class KeyboardSwitcher implements KeyboardState.SwitchActions {
         setContextThemeWrapper(mLatinIME, mKeyboardTheme);
         mCurrentInputView = (InputView)LayoutInflater.from(mThemeContext).inflate(
                 R.layout.input_view, null);
+        mMainKeyboardFrame = mCurrentInputView.findViewById(R.id.main_keyboard_frame);
+        mEmojiPalettesView = (EmojiPalettesView)mCurrentInputView.findViewById(
+                R.id.emoji_keyboard_view);
 
         mKeyboardView = (MainKeyboardView) mCurrentInputView.findViewById(R.id.keyboard_view);
-        if (isHardwareAcceleratedDrawingEnabled) {
-            mKeyboardView.setLayerType(View.LAYER_TYPE_HARDWARE, null);
-            // TODO: Should use LAYER_TYPE_SOFTWARE when hardware acceleration is off?
-        }
+        mKeyboardView.setHardwareAcceleratedDrawingEnabled(isHardwareAcceleratedDrawingEnabled);
         mKeyboardView.setKeyboardActionListener(mLatinIME);
+        mEmojiPalettesView.setHardwareAcceleratedDrawingEnabled(
+                isHardwareAcceleratedDrawingEnabled);
+        mEmojiPalettesView.setKeyboardActionListener(mLatinIME);
 
         // This always needs to be set since the accessibility state can
         // potentially change without the input view being re-created.

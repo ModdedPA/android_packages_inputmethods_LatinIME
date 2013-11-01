@@ -25,10 +25,10 @@ import android.content.pm.PackageManager;
 import android.os.Process;
 import android.preference.PreferenceManager;
 import android.util.Log;
+import android.view.inputmethod.InputMethodManager;
 
 import com.android.inputmethod.compat.IntentCompatUtils;
-import com.android.inputmethod.latin.RichInputMethodManager;
-import com.android.inputmethod.latin.Settings;
+import com.android.inputmethod.latin.settings.Settings;
 
 /**
  * This class detects the {@link Intent#ACTION_MY_PACKAGE_REPLACED} broadcast intent when this IME
@@ -65,17 +65,16 @@ public final class LauncherIconVisibilityManager extends BroadcastReceiver {
         }
 
         // The process that hosts this broadcast receiver is invoked and remains alive even after
-        // 1) the package has been re-installed, 2) the device has been booted,
-        // 3) a multiuser has been created.
+        // 1) the package has been re-installed, 2) the device has just booted,
+        // 3) a new user has been created.
         // There is no good reason to keep the process alive if this IME isn't a current IME.
-        final boolean isCurrentImeOfCurrentUser;
-        if (RichInputMethodManager.isInputMethodManagerValidForUserOfThisProcess(context)) {
-            RichInputMethodManager.init(context);
-            isCurrentImeOfCurrentUser = SetupActivity.isThisImeCurrent(context);
-        } else {
-            isCurrentImeOfCurrentUser = false;
-        }
-
+        final InputMethodManager imm =
+                (InputMethodManager)context.getSystemService(Context.INPUT_METHOD_SERVICE);
+        // Called to check whether this IME has been triggered by the current user or not
+        final boolean isInputMethodManagerValidForUserOfThisProcess =
+                !imm.getInputMethodList().isEmpty();
+        final boolean isCurrentImeOfCurrentUser = isInputMethodManagerValidForUserOfThisProcess
+                && SetupActivity.isThisImeCurrent(context, imm);
         if (!isCurrentImeOfCurrentUser) {
             final int myPid = Process.myPid();
             Log.i(TAG, "Killing my process: pid=" + myPid);
@@ -91,7 +90,7 @@ public final class LauncherIconVisibilityManager extends BroadcastReceiver {
         } else if (Intent.ACTION_BOOT_COMPLETED.equals(action)) {
             Log.i(TAG, "Boot has been completed");
             return true;
-        } else if (IntentCompatUtils.has_ACTION_USER_INITIALIZE(intent)) {
+        } else if (IntentCompatUtils.is_ACTION_USER_INITIALIZE(action)) {
             Log.i(TAG, "User initialize");
             return true;
         }

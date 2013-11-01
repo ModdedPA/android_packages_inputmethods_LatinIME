@@ -20,11 +20,7 @@ import static com.android.inputmethod.latin.Constants.Subtype.ExtraValue.KEYBOAR
 
 import android.accounts.Account;
 import android.accounts.AccountManager;
-import android.app.AlertDialog;
-import android.app.Dialog;
 import android.content.Context;
-import android.content.DialogInterface;
-import android.content.DialogInterface.OnCancelListener;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
@@ -34,7 +30,6 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Paint.Style;
-import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -42,12 +37,9 @@ import android.os.IBinder;
 import android.os.SystemClock;
 import android.preference.PreferenceManager;
 import android.text.TextUtils;
-import android.text.format.DateUtils;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
-import android.view.Window;
-import android.view.WindowManager;
 import android.view.inputmethod.CompletionInfo;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
@@ -61,15 +53,16 @@ import com.android.inputmethod.keyboard.KeyboardView;
 import com.android.inputmethod.keyboard.MainKeyboardView;
 import com.android.inputmethod.latin.Constants;
 import com.android.inputmethod.latin.Dictionary;
-import com.android.inputmethod.latin.InputTypeUtils;
 import com.android.inputmethod.latin.LatinIME;
 import com.android.inputmethod.latin.R;
 import com.android.inputmethod.latin.RichInputConnection;
-import com.android.inputmethod.latin.RichInputConnection.Range;
 import com.android.inputmethod.latin.Suggest;
 import com.android.inputmethod.latin.SuggestedWords;
 import com.android.inputmethod.latin.define.ProductionFlag;
+import com.android.inputmethod.latin.utils.InputTypeUtils;
+import com.android.inputmethod.latin.utils.TextRange;
 import com.android.inputmethod.research.MotionEventReader.ReplayData;
+import com.android.inputmethod.research.ui.SplashScreen;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -81,8 +74,11 @@ import java.nio.charset.Charset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 
+// TODO: Add a unit test for every "logging" method (i.e. that is called from the IME and calls
+// enqueueEvent to record a LogStatement).
 /**
  * Logs the use of the LatinIME keyboard.
  *
@@ -92,12 +88,12 @@ import java.util.regex.Pattern;
  * This functionality is off by default. See
  * {@link ProductionFlag#USES_DEVELOPMENT_ONLY_DIAGNOSTICS}.
  */
-public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChangeListener {
+public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChangeListener,
+        SplashScreen.UserConsentListener {
     // TODO: This class has grown quite large and combines several concerns that should be
     // separated.  The following refactorings will be applied as soon as possible after adding
     // support for replaying historical events, fixing some replay bugs, adding some ui constraints
     // on the feedback dialog, and adding the survey dialog.
-    // TODO: Refactor.  Move splash screen code into separate class.
     // TODO: Refactor.  Move feedback screen code into separate class.
     // TODO: Refactor.  Move logging invocations into their own class.
     // TODO: Refactor.  Move currentLogUnit management into separate class.
@@ -136,15 +132,18 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     // FEEDBACK_WORD_BUFFER_SIZE should add 1 because it must also hold the feedback LogUnit itself.
     public static final int FEEDBACK_WORD_BUFFER_SIZE = (Integer.MAX_VALUE - 1) + 1;
 
+    // The special output text to invoke a research feedback dialog.
+    public static final String RESEARCH_KEY_OUTPUT_TEXT = ".research.";
+
     // constants related to specific log points
     private static final String WHITESPACE_SEPARATORS = " \t\n\r";
     private static final int MAX_INPUTVIEW_LENGTH_TO_CAPTURE = 8192; // must be >=1
     private static final String PREF_RESEARCH_SAVED_CHANNEL = "pref_research_saved_channel";
 
-    private static final long RESEARCHLOG_CLOSE_TIMEOUT_IN_MS = 5 * 1000;
-    private static final long RESEARCHLOG_ABORT_TIMEOUT_IN_MS = 5 * 1000;
-    private static final long DURATION_BETWEEN_DIR_CLEANUP_IN_MS = DateUtils.DAY_IN_MILLIS;
-    private static final long MAX_LOGFILE_AGE_IN_MS = 4 * DateUtils.DAY_IN_MILLIS;
+    private static final long RESEARCHLOG_CLOSE_TIMEOUT_IN_MS = TimeUnit.SECONDS.toMillis(5);
+    private static final long RESEARCHLOG_ABORT_TIMEOUT_IN_MS = TimeUnit.SECONDS.toMillis(5);
+    private static final long DURATION_BETWEEN_DIR_CLEANUP_IN_MS = TimeUnit.DAYS.toMillis(1);
+    private static final long MAX_LOGFILE_AGE_IN_MS = TimeUnit.DAYS.toMillis(4);
 
     private static final ResearchLogger sInstance = new ResearchLogger();
     private static String sAccountType = null;
@@ -182,8 +181,8 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     private final MotionEventReader mMotionEventReader = new MotionEventReader();
     private final Replayer mReplayer = Replayer.getInstance();
     private ResearchLogDirectory mResearchLogDirectory;
+    private SplashScreen mSplashScreen;
 
-    private Intent mUploadIntent;
     private Intent mUploadNowIntent;
 
     /* package for test */ LogUnit mCurrentLogUnit = new LogUnit();
@@ -194,9 +193,16 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     // gesture, and when committing the earlier word, split the LogUnit.
     private long mSavedDownEventTime;
     private Bundle mFeedbackDialogBundle = null;
+    // Whether the feedback dialog is visible, and the user is typing into it.  Normal logging is
+    // not performed on text that the user types into the feedback dialog.
     private boolean mInFeedbackDialog = false;
     private Handler mUserRecordingTimeoutHandler;
-    private static final long USER_RECORDING_TIMEOUT_MS = 30L * DateUtils.SECOND_IN_MILLIS;
+    private static final long USER_RECORDING_TIMEOUT_MS = TimeUnit.SECONDS.toMillis(30);
+
+    // Stores a temporary LogUnit while generating a phantom space.  Needed because phantom spaces
+    // are issued out-of-order, immediately before the characters generated by other operations that
+    // have already outputted LogStatements.
+    private LogUnit mPhantomSpaceLogUnit = null;
 
     private ResearchLogger() {
         mStatistics = Statistics.getInstance();
@@ -229,7 +235,6 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         resetLogBuffers();
 
         // Initialize external services
-        mUploadIntent = new Intent(mLatinIME, UploaderService.class);
         mUploadNowIntent = new Intent(mLatinIME, UploaderService.class);
         mUploadNowIntent.putExtra(UploaderService.EXTRA_UPLOAD_UNCONDITIONALLY, true);
         if (ProductionFlag.USES_DEVELOPMENT_ONLY_DIAGNOSTICS) {
@@ -253,14 +258,14 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
                     if (DEBUG) {
                         final String wordsString = logUnit.getWordsAsString();
                         Log.d(TAG, "onPublish: '" + wordsString
-                                + "', hc: " + logUnit.containsCorrection()
+                                + "', hc: " + logUnit.containsUserDeletions()
                                 + ", cipd: " + canIncludePrivateData);
                     }
                     for (final String word : logUnit.getWordsAsStringArray()) {
                         final Dictionary dictionary = getDictionary();
                         mStatistics.recordWordEntered(
                                 dictionary != null && dictionary.isValidWord(word),
-                                logUnit.containsCorrection());
+                                logUnit.containsUserDeletions());
                     }
                 }
                 publishLogUnits(logUnits, mMainResearchLog, canIncludePrivateData);
@@ -292,62 +297,19 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         }
     }
 
-    private Dialog mSplashDialog = null;
-
     private void maybeShowSplashScreen() {
-        if (ResearchSettings.readHasSeenSplash(mPrefs)) {
-            return;
-        }
-        if (mSplashDialog != null && mSplashDialog.isShowing()) {
-            return;
-        }
-        final IBinder windowToken = mMainKeyboardView != null
-                ? mMainKeyboardView.getWindowToken() : null;
-        if (windowToken == null) {
-            return;
-        }
-        final AlertDialog.Builder builder = new AlertDialog.Builder(mLatinIME)
-                .setTitle(R.string.research_splash_title)
-                .setMessage(R.string.research_splash_content)
-                .setPositiveButton(android.R.string.yes,
-                        new DialogInterface.OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface dialog, int which) {
-                                onUserLoggingConsent();
-                                mSplashDialog.dismiss();
-                            }
-                })
-                .setNegativeButton(android.R.string.no,
-                        new DialogInterface.OnClickListener() {
-                            @Override
-                            public void onClick(DialogInterface dialog, int which) {
-                                final String packageName = mLatinIME.getPackageName();
-                                final Uri packageUri = Uri.parse("package:" + packageName);
-                                final Intent intent = new Intent(Intent.ACTION_UNINSTALL_PACKAGE,
-                                        packageUri);
-                                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                                mLatinIME.startActivity(intent);
-                            }
-                })
-                .setCancelable(true)
-                .setOnCancelListener(
-                        new OnCancelListener() {
-                            @Override
-                            public void onCancel(DialogInterface dialog) {
-                                mLatinIME.requestHideSelf(0);
-                            }
-                });
-        mSplashDialog = builder.create();
-        final Window w = mSplashDialog.getWindow();
-        final WindowManager.LayoutParams lp = w.getAttributes();
-        lp.token = windowToken;
-        lp.type = WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG;
-        w.setAttributes(lp);
-        w.addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM);
-        mSplashDialog.show();
+        if (ResearchSettings.readHasSeenSplash(mPrefs)) return;
+        if (mSplashScreen != null && mSplashScreen.isShowing()) return;
+        if (mMainKeyboardView == null) return;
+        final IBinder windowToken = mMainKeyboardView.getWindowToken();
+        if (windowToken == null) return;
+
+        mSplashScreen = new SplashScreen(mLatinIME, this);
+        mSplashScreen.showSplashScreen(windowToken);
     }
 
-    public void onUserLoggingConsent() {
+    @Override
+    public void onSplashScreenUserClickedOk() {
         if (mPrefs == null) {
             mPrefs = PreferenceManager.getDefaultSharedPreferences(mLatinIME);
             if (mPrefs == null) return;
@@ -356,12 +318,6 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         ResearchSettings.writeResearchLoggerEnabledFlag(mPrefs, true);
         ResearchSettings.writeHasSeenSplash(mPrefs, true);
         restart();
-    }
-
-    private void setLoggingAllowed(final boolean enableLogging) {
-        if (mPrefs == null) return;
-        sIsLogging = enableLogging;
-        ResearchSettings.writeResearchLoggerEnabledFlag(mPrefs, enableLogging);
     }
 
     private void checkForEmptyEditor() {
@@ -420,6 +376,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         mMainResearchLog.blockingClose(RESEARCHLOG_CLOSE_TIMEOUT_IN_MS);
 
         resetLogBuffers();
+        cancelFeedbackDialog();
     }
 
     public void abort() {
@@ -448,12 +405,19 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     }
 
     public void onResearchKeySelected(final LatinIME latinIME) {
+        mCurrentLogUnit.removeResearchButtonInvocation();
         if (mInFeedbackDialog) {
             Toast.makeText(latinIME, R.string.research_please_exit_feedback_form,
                     Toast.LENGTH_LONG).show();
             return;
         }
         presentFeedbackDialog(latinIME);
+    }
+
+    public void presentFeedbackDialogFromSettings() {
+        if (mLatinIME != null) {
+            presentFeedbackDialog(mLatinIME);
+        }
     }
 
     public void presentFeedbackDialog(final LatinIME latinIME) {
@@ -574,8 +538,8 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
             toast.show();
             boolean isLogDeleted = abort();
             final long currentTime = System.currentTimeMillis();
-            final long resumeTime = currentTime + 1000 * 60 *
-                    SUSPEND_DURATION_IN_MINUTES;
+            final long resumeTime = currentTime
+                    + TimeUnit.MINUTES.toMillis(SUSPEND_DURATION_IN_MINUTES);
             suspendLoggingUntil(resumeTime);
             toast.cancel();
             Toast.makeText(latinIME, R.string.research_notify_logging_suspended,
@@ -650,7 +614,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         feedbackLogUnit.addLogStatement(LOGSTATEMENT_FEEDBACK, SystemClock.uptimeMillis(),
                 feedbackContents, accountName, recording);
 
-        final ResearchLog feedbackLog = new ResearchLog(mResearchLogDirectory.getLogFilePath(
+        final ResearchLog feedbackLog = new FeedbackLog(mResearchLogDirectory.getLogFilePath(
                 System.currentTimeMillis(), System.nanoTime()), mLatinIME);
         final LogBuffer feedbackLogBuffer = new LogBuffer();
         feedbackLogBuffer.shiftIn(feedbackLogUnit);
@@ -667,7 +631,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
                             mMotionEventReader.readMotionEventData(mUserRecordingFile);
                     mReplayer.replay(replayData, null);
                 }
-            }, 1000);
+            }, TimeUnit.SECONDS.toMillis(1));
         }
 
         if (FEEDBACK_DIALOG_SHOULD_PRESERVE_TEXT_FIELD) {
@@ -692,13 +656,19 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         mInFeedbackDialog = false;
     }
 
+    private void cancelFeedbackDialog() {
+        if (isMakingUserRecording()) {
+            cancelRecording();
+        }
+        mInFeedbackDialog = false;
+    }
+
     public void initSuggest(final Suggest suggest) {
         mSuggest = suggest;
         // MainLogBuffer now has an out-of-date Suggest object.  Close down MainLogBuffer and create
         // a new one.
         if (mMainLogBuffer != null) {
-            stop();
-            start();
+            restart();
         }
     }
 
@@ -713,8 +683,28 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         mIsPasswordView = isPasswordView;
     }
 
-    private boolean isAllowedToLog() {
-        return !mIsPasswordView && sIsLogging && !mInFeedbackDialog;
+    /**
+     * Returns true if logging is permitted.
+     *
+     * This method is called when adding a LogStatement to a LogUnit, and when adding a LogUnit to a
+     * ResearchLog.  It is checked in both places in case conditions change between these times, and
+     * as a defensive measure in case refactoring changes the logging pipeline.
+     */
+    private boolean isAllowedToLogTo(final ResearchLog researchLog) {
+        // Logging is never allowed in these circumstances
+        if (mIsPasswordView) return false;
+        if (!sIsLogging) return false;
+        if (mInFeedbackDialog) {
+            // The FeedbackDialog is up.  Normal logging should not happen (the user might be trying
+            // out things while the dialog is up, and their reporting of an issue may not be
+            // representative of what they normally type).  However, after the user has finished
+            // entering their feedback, the logger packs their comments and an encoded version of
+            // any demonstration of the issue into a special "FeedbackLog".  So if the FeedbackLog
+            // is the destination, we do want to allow logging to it.
+            return researchLog.isFeedbackLog();
+        }
+        // No other exclusions.  Logging is permitted.
+        return true;
     }
 
     public void requestIndicatorRedraw() {
@@ -747,7 +737,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         // and remove this method.
         // The check for MainKeyboardView ensures that the indicator only decorates the main
         // keyboard, not every keyboard.
-        if (IS_SHOWING_INDICATOR && (isAllowedToLog() || isReplaying())
+        if (IS_SHOWING_INDICATOR && (isAllowedToLogTo(mMainResearchLog) || isReplaying())
                 && view instanceof MainKeyboardView) {
             final int savedColor = paint.getColor();
             paint.setColor(getIndicatorColor());
@@ -782,7 +772,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     private synchronized void enqueueEvent(final LogUnit logUnit, final LogStatement logStatement,
             final Object... values) {
         assert values.length == logStatement.getKeys().length;
-        if (isAllowedToLog() && logUnit != null) {
+        if (isAllowedToLogTo(mMainResearchLog) && logUnit != null) {
             final long time = SystemClock.uptimeMillis();
             logUnit.addLogStatement(logStatement, time, values);
         }
@@ -792,8 +782,8 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         mCurrentLogUnit.setMayContainDigit();
     }
 
-    private void setCurrentLogUnitContainsCorrection() {
-        mCurrentLogUnit.setContainsCorrection();
+    private void setCurrentLogUnitContainsUserDeletions() {
+        mCurrentLogUnit.setContainsUserDeletions();
     }
 
     private void setCurrentLogUnitCorrectionType(final int correctionType) {
@@ -825,20 +815,22 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         // The user has deleted this word and returned to the previous.  Check that the word in the
         // logUnit matches the expected word.  If so, restore the last log unit committed to be the
         // current logUnit.  I.e., pull out the last LogUnit from all the LogBuffers, and make
-        // restore it to mCurrentLogUnit so the new edits are captured with the word.  Optionally
-        // dump the contents of mCurrentLogUnit (useful if they contain deletions of the next word
-        // that should not be reported to protect user privacy)
+        // it the mCurrentLogUnit so the new edits are captured with the word.  Optionally dump the
+        // contents of mCurrentLogUnit (useful if they contain deletions of the next word that
+        // should not be reported to protect user privacy)
         //
         // Note that we don't use mLastLogUnit here, because it only goes one word back and is only
         // needed for reverts, which only happen one back.
         final LogUnit oldLogUnit = mMainLogBuffer.peekLastLogUnit();
 
-        // Check that expected word matches.
+        // Check that expected word matches.  It's ok if both strings are null, because this is the
+        // case where the LogUnit is storing a non-word, e.g. a separator.
         if (oldLogUnit != null) {
+            // Because the word is stored in the LogUnit with digits scrubbed, the comparison must
+            // be made on a scrubbed version of the expectedWord as well.
+            final String scrubbedExpectedWord = scrubDigitsFromString(expectedWord);
             final String oldLogUnitWords = oldLogUnit.getWordsAsString();
-            if (oldLogUnitWords != null && !oldLogUnitWords.equals(expectedWord)) {
-                return;
-            }
+            if (!TextUtils.equals(scrubbedExpectedWord, oldLogUnitWords)) return;
         }
 
         // Uncommit, merging if necessary.
@@ -881,7 +873,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
             final ResearchLog researchLog, final boolean canIncludePrivateData) {
         final LogUnit openingLogUnit = new LogUnit();
         if (logUnits.isEmpty()) return;
-        if (!isAllowedToLog()) return;
+        if (!isAllowedToLogTo(researchLog)) return;
         // LogUnits not containing private data, such as contextual data for the log, do not require
         // logSegment boundary statements.
         if (canIncludePrivateData) {
@@ -893,7 +885,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
             if (DEBUG) {
                 Log.d(TAG, "publishLogBuffer: " + (logUnit.hasOneOrMoreWords()
                         ? logUnit.getWordsAsString() : "<wordless>")
-                        + ", correction?: " + logUnit.containsCorrection());
+                        + ", correction?: " + logUnit.containsUserDeletions());
             }
             researchLog.publish(logUnit, canIncludePrivateData);
         }
@@ -954,7 +946,8 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         return Character.isDigit(codePoint) ? DIGIT_REPLACEMENT_CODEPOINT : codePoint;
     }
 
-    /* package for test */ static String scrubDigitsFromString(String s) {
+    /* package for test */ static String scrubDigitsFromString(final String s) {
+        if (s == null) return null;
         StringBuilder sb = null;
         final int length = s.length();
         for (int i = 0; i < length; i = s.offsetByCodePoints(i, 1)) {
@@ -1077,22 +1070,24 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     private static final LogStatement LOGSTATEMENT_MAIN_KEYBOARD_VIEW_PROCESS_MOTION_EVENT =
             new LogStatement("MotionEvent", true, false, "action",
                     LogStatement.KEY_IS_LOGGING_RELATED, "motionEvent");
-    public static void mainKeyboardView_processMotionEvent(final MotionEvent me, final int action,
-            final long eventTime, final int index, final int id, final int x, final int y) {
-        if (me != null) {
-            final String actionString = LoggingUtils.getMotionEventActionTypeString(action);
-            final ResearchLogger researchLogger = getInstance();
-            researchLogger.enqueueEvent(LOGSTATEMENT_MAIN_KEYBOARD_VIEW_PROCESS_MOTION_EVENT,
-                    actionString, false /* IS_LOGGING_RELATED */, MotionEvent.obtain(me));
-            if (action == MotionEvent.ACTION_DOWN) {
-                // Subtract 1 from eventTime so the down event is included in the later
-                // LogUnit, not the earlier (the test is for inequality).
-                researchLogger.setSavedDownEventTime(eventTime - 1);
-            }
-            // Refresh the timer in case we are capturing user feedback.
-            if (researchLogger.isMakingUserRecording()) {
-                researchLogger.resetRecordingTimer();
-            }
+    public static void mainKeyboardView_processMotionEvent(final MotionEvent me) {
+        if (me == null) {
+            return;
+        }
+        final int action = me.getActionMasked();
+        final long eventTime = me.getEventTime();
+        final String actionString = LoggingUtils.getMotionEventActionTypeString(action);
+        final ResearchLogger researchLogger = getInstance();
+        researchLogger.enqueueEvent(LOGSTATEMENT_MAIN_KEYBOARD_VIEW_PROCESS_MOTION_EVENT,
+                actionString, false /* IS_LOGGING_RELATED */, MotionEvent.obtain(me));
+        if (action == MotionEvent.ACTION_DOWN) {
+            // Subtract 1 from eventTime so the down event is included in the later
+            // LogUnit, not the earlier (the test is for inequality).
+            researchLogger.setSavedDownEventTime(eventTime - 1);
+        }
+        // Refresh the timer in case we are capturing user feedback.
+        if (researchLogger.isMakingUserRecording()) {
+            researchLogger.resetRecordingTimer();
         }
     }
 
@@ -1223,7 +1218,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
             final RichInputConnection connection) {
         String word = "";
         if (connection != null) {
-            Range range = connection.getWordRangeAtCursor(WHITESPACE_SEPARATORS, 1);
+            TextRange range = connection.getWordRangeAtCursor(WHITESPACE_SEPARATORS, 1);
             if (range != null) {
                 word = range.mWord.toString();
             }
@@ -1247,26 +1242,50 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     }
 
     /**
+     * Log a revert of onTextInput() (known in the IME as "EnteredText").
+     *
+     * SystemResponse: Remove the LogUnit recording the textInput
+     */
+    public static void latinIME_handleBackspace_cancelTextInput(final String text) {
+        final ResearchLogger researchLogger = getInstance();
+        researchLogger.uncommitCurrentLogUnit(text, true /* dumpCurrentLogUnit */);
+    }
+
+    /**
      * Log a call to LatinIME.pickSuggestionManually().
      *
      * UserAction: The user has chosen a specific word from the suggestion strip.
      */
     private static final LogStatement LOGSTATEMENT_LATINIME_PICKSUGGESTIONMANUALLY =
             new LogStatement("LatinIMEPickSuggestionManually", true, false, "replacedWord", "index",
-                    "suggestion", "x", "y", "isBatchMode");
+                    "suggestion", "x", "y", "isBatchMode", "score", "kind", "sourceDict");
+    /**
+     * Log a call to LatinIME.pickSuggestionManually().
+     *
+     * @param replacedWord the typed word that this manual suggestion replaces. May not be null.
+     * @param index the index in the suggestion strip
+     * @param suggestion the committed suggestion. May not be null.
+     * @param isBatchMode whether this was input in batch mode, aka gesture.
+     * @param score the internal score of the suggestion, as output by the dictionary
+     * @param kind the kind of suggestion, as one of the SuggestedWordInfo#KIND_* constants
+     * @param sourceDict the source origin of this word, as one of the Dictionary#TYPE_* constants.
+     */
     public static void latinIME_pickSuggestionManually(final String replacedWord,
-            final int index, final String suggestion, final boolean isBatchMode) {
+            final int index, final String suggestion, final boolean isBatchMode,
+            final int score, final int kind, final String sourceDict) {
         final ResearchLogger researchLogger = getInstance();
+        // Note : suggestion can't be null here, because it's only called in a place where it
+        // can't be null.
         if (!replacedWord.equals(suggestion.toString())) {
             // The user chose something other than what was already there.
-            researchLogger.setCurrentLogUnitContainsCorrection();
+            researchLogger.setCurrentLogUnitContainsUserDeletions();
             researchLogger.setCurrentLogUnitCorrectionType(LogUnit.CORRECTIONTYPE_TYPO);
         }
         final String scrubbedWord = scrubDigitsFromString(suggestion);
         researchLogger.enqueueEvent(LOGSTATEMENT_LATINIME_PICKSUGGESTIONMANUALLY,
                 scrubDigitsFromString(replacedWord), index,
-                suggestion == null ? null : scrubbedWord, Constants.SUGGESTION_STRIP_COORDINATE,
-                Constants.SUGGESTION_STRIP_COORDINATE, isBatchMode);
+                scrubbedWord, Constants.SUGGESTION_STRIP_COORDINATE,
+                Constants.SUGGESTION_STRIP_COORDINATE, isBatchMode, score, kind, sourceDict);
         researchLogger.commitCurrentLogUnitAsWord(scrubbedWord, Long.MAX_VALUE, isBatchMode);
         researchLogger.mStatistics.recordManualSuggestion(SystemClock.uptimeMillis());
     }
@@ -1291,17 +1310,32 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     /**
      * Log a call to LatinIME.sendKeyCodePoint().
      *
-     * SystemResponse: The IME is inserting text into the TextView for numbers, fixed strings, or
-     * some other unusual mechanism.
+     * SystemResponse: The IME is inserting text into the TextView for non-word-constituent,
+     * strings (separators, numbers, other symbols).
      */
     private static final LogStatement LOGSTATEMENT_LATINIME_SENDKEYCODEPOINT =
             new LogStatement("LatinIMESendKeyCodePoint", true, false, "code");
     public static void latinIME_sendKeyCodePoint(final int code) {
         final ResearchLogger researchLogger = getInstance();
-        researchLogger.enqueueEvent(LOGSTATEMENT_LATINIME_SENDKEYCODEPOINT,
-                Constants.printableCode(scrubDigitFromCodePoint(code)));
-        if (Character.isDigit(code)) {
-            researchLogger.setCurrentLogUnitContainsDigitFlag();
+        final LogUnit phantomSpaceLogUnit = researchLogger.mPhantomSpaceLogUnit;
+        if (phantomSpaceLogUnit == null) {
+            researchLogger.enqueueEvent(LOGSTATEMENT_LATINIME_SENDKEYCODEPOINT,
+                    Constants.printableCode(scrubDigitFromCodePoint(code)));
+            if (Character.isDigit(code)) {
+                researchLogger.setCurrentLogUnitContainsDigitFlag();
+            }
+            researchLogger.commitCurrentLogUnit();
+        } else {
+            researchLogger.enqueueEvent(phantomSpaceLogUnit, LOGSTATEMENT_LATINIME_SENDKEYCODEPOINT,
+                    Constants.printableCode(scrubDigitFromCodePoint(code)));
+            if (Character.isDigit(code)) {
+                phantomSpaceLogUnit.setMayContainDigit();
+            }
+            researchLogger.mMainLogBuffer.shiftIn(phantomSpaceLogUnit);
+            if (researchLogger.mUserRecordingLogBuffer != null) {
+                researchLogger.mUserRecordingLogBuffer.shiftIn(phantomSpaceLogUnit);
+            }
+            researchLogger.mPhantomSpaceLogUnit = null;
         }
     }
 
@@ -1311,12 +1345,18 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
      * SystemResponse: The IME is inserting a real space in place of a phantom space.
      */
     private static final LogStatement LOGSTATEMENT_LATINIME_PROMOTEPHANTOMSPACE =
-            new LogStatement("LatinIMEPromotPhantomSpace", false, false);
+            new LogStatement("LatinIMEPromotePhantomSpace", false, false);
     public static void latinIME_promotePhantomSpace() {
+        // A phantom space is always added before the text that triggered it.  The triggering text
+        // and the events that created it will be in mCurrentLogUnit, but the phantom space should
+        // be in its own LogUnit, committed before the triggering text.  Although it is created
+        // here, it is not added to the LogBuffer until the following call to
+        // latinIME_sendKeyCodePoint, because SENDKEYCODEPOINT LogStatement also must go into that
+        // LogUnit.
         final ResearchLogger researchLogger = getInstance();
-        final LogUnit logUnit;
-        logUnit = researchLogger.mMainLogBuffer.peekLastLogUnit();
-        researchLogger.enqueueEvent(logUnit, LOGSTATEMENT_LATINIME_PROMOTEPHANTOMSPACE);
+        researchLogger.mPhantomSpaceLogUnit = new LogUnit();
+        researchLogger.enqueueEvent(researchLogger.mPhantomSpaceLogUnit,
+                LOGSTATEMENT_LATINIME_PROMOTEPHANTOMSPACE);
     }
 
     /**
@@ -1374,7 +1414,8 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
                     "navigatePrevious", "clobberSettingsKey", "passwordInput", "shortcutKeyEnabled",
                     "hasShortcutKey", "languageSwitchKeyEnabled", "isMultiLine", "tw", "th",
                     "keys");
-    public static void mainKeyboardView_setKeyboard(final Keyboard keyboard) {
+    public static void mainKeyboardView_setKeyboard(final Keyboard keyboard,
+            final int orientation) {
         final KeyboardId kid = keyboard.mId;
         final boolean isPasswordView = kid.passwordInput();
         final ResearchLogger researchLogger = getInstance();
@@ -1382,11 +1423,11 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
         researchLogger.enqueueEvent(LOGSTATEMENT_MAINKEYBOARDVIEW_SETKEYBOARD,
                 KeyboardId.elementIdToName(kid.mElementId),
                 kid.mLocale + ":" + kid.mSubtype.getExtraValueOf(KEYBOARD_LAYOUT_SET),
-                kid.mOrientation, kid.mWidth, KeyboardId.modeName(kid.mMode), kid.imeAction(),
+                orientation, kid.mWidth, KeyboardId.modeName(kid.mMode), kid.imeAction(),
                 kid.navigateNext(), kid.navigatePrevious(), kid.mClobberSettingsKey,
                 isPasswordView, kid.mShortcutKeyEnabled, kid.mHasShortcutKey,
                 kid.mLanguageSwitchKeyEnabled, kid.isMultiLine(), keyboard.mOccupiedWidth,
-                keyboard.mOccupiedHeight, keyboard.mKeys);
+                keyboard.mOccupiedHeight, keyboard.getKeys());
     }
 
     /**
@@ -1402,23 +1443,40 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     public static void latinIME_revertCommit(final String committedWord,
             final String originallyTypedWord, final boolean isBatchMode,
             final String separatorString) {
+        // TODO: Prioritize adding a unit test for this method (as it is especially complex)
+        // TODO: Update the UserRecording LogBuffer as well as the MainLogBuffer
         final ResearchLogger researchLogger = getInstance();
-        // TODO: Verify that mCurrentLogUnit has been restored and contains the reverted word.
-        final LogUnit logUnit;
-        logUnit = researchLogger.mMainLogBuffer.peekLastLogUnit();
-        if (originallyTypedWord.length() > 0 && hasLetters(originallyTypedWord)) {
-            if (logUnit != null) {
-                logUnit.setWords(originallyTypedWord);
-            }
+        //
+        // 1. Remove separator LogUnit
+        final LogUnit lastLogUnit = researchLogger.mMainLogBuffer.peekLastLogUnit();
+        // Check that we're not at the beginning of input
+        if (lastLogUnit == null) return;
+        // Check that we're after a separator
+        if (lastLogUnit.getWordsAsString() != null) return;
+        // Remove separator
+        final LogUnit separatorLogUnit = researchLogger.mMainLogBuffer.unshiftIn();
+
+        // 2. Add revert LogStatement
+        final LogUnit revertedLogUnit = researchLogger.mMainLogBuffer.peekLastLogUnit();
+        if (revertedLogUnit == null) return;
+        if (!revertedLogUnit.getWordsAsString().equals(scrubDigitsFromString(committedWord))) {
+            // Any word associated with the reverted LogUnit has already had its digits scrubbed, so
+            // any digits in the committedWord argument must also be scrubbed for an accurate
+            // comparison.
+            return;
         }
-        researchLogger.enqueueEvent(logUnit != null ? logUnit : researchLogger.mCurrentLogUnit,
-                LOGSTATEMENT_LATINIME_REVERTCOMMIT, committedWord, originallyTypedWord,
-                separatorString);
-        if (logUnit != null) {
-            logUnit.setContainsCorrection();
-        }
+        researchLogger.enqueueEvent(revertedLogUnit, LOGSTATEMENT_LATINIME_REVERTCOMMIT,
+                committedWord, originallyTypedWord, separatorString);
+
+        // 3. Update the word associated with the LogUnit
+        revertedLogUnit.setWords(originallyTypedWord);
+        revertedLogUnit.setContainsUserDeletions();
+
+        // 4. Re-add the separator LogUnit
+        researchLogger.mMainLogBuffer.shiftIn(separatorLogUnit);
+
+        // 5. Record stats
         researchLogger.mStatistics.recordRevertCommit(SystemClock.uptimeMillis());
-        researchLogger.commitCurrentLogUnitAsWord(originallyTypedWord, Long.MAX_VALUE, isBatchMode);
     }
 
     /**
@@ -1453,14 +1511,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
                     Constants.printableCode(scrubDigitFromCodePoint(code)),
                     outputText == null ? null : scrubDigitsFromString(outputText.toString()),
                     x, y, ignoreModifierKey, altersCode, key.isEnabled());
-            if (code == Constants.CODE_RESEARCH) {
-                researchLogger.suppressResearchKeyMotionData();
-            }
         }
-    }
-
-    private void suppressResearchKeyMotionData() {
-        mCurrentLogUnit.removeResearchButtonInvocation();
     }
 
     /**
@@ -1528,7 +1579,12 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     private static final LogStatement LOGSTATEMENT_RICHINPUTCONNECTION_REVERTDOUBLESPACEPERIOD =
             new LogStatement("RichInputConnectionRevertDoubleSpacePeriod", false, false);
     public static void richInputConnection_revertDoubleSpacePeriod() {
-        getInstance().enqueueEvent(LOGSTATEMENT_RICHINPUTCONNECTION_REVERTDOUBLESPACEPERIOD);
+        final ResearchLogger researchLogger = getInstance();
+        // An extra LogUnit is added for the period; this is removed here because of the revert.
+        researchLogger.uncommitCurrentLogUnit(null, true /* dumpCurrentLogUnit */);
+        // TODO: This will probably be lost as the user backspaces further.  Figure out how to put
+        // it into the right logUnit.
+        researchLogger.enqueueEvent(LOGSTATEMENT_RICHINPUTCONNECTION_REVERTDOUBLESPACEPERIOD);
     }
 
     /**
@@ -1571,25 +1627,6 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     }
 
     private boolean isExpectingCommitText = false;
-    /**
-     * Log a call to (UnknownClass).commitPartialText
-     *
-     * SystemResponse: The IME is committing part of a word.  This happens if a space is
-     * automatically inserted to split a single typed string into two or more words.
-     */
-    // TODO: This method is currently unused.  Find where it should be called from in the IME and
-    // add invocations.
-    private static final LogStatement LOGSTATEMENT_COMMIT_PARTIAL_TEXT =
-            new LogStatement("CommitPartialText", true, false, "newCursorPosition");
-    public static void commitPartialText(final String committedWord,
-            final long lastTimestampOfWordData, final boolean isBatchMode) {
-        final ResearchLogger researchLogger = getInstance();
-        final String scrubbedWord = scrubDigitsFromString(committedWord);
-        researchLogger.enqueueEvent(LOGSTATEMENT_COMMIT_PARTIAL_TEXT);
-        researchLogger.mStatistics.recordAutoCorrection(SystemClock.uptimeMillis());
-        researchLogger.commitCurrentLogUnitAsWord(scrubbedWord, lastTimestampOfWordData,
-                isBatchMode);
-    }
 
     /**
      * Log a call to RichInputConnection.commitText().
@@ -1613,12 +1650,24 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     }
 
     /**
-     * Shared event for logging committed text.
+     * Shared events for logging committed text.
+     *
+     * The "CommitTextEventHappened" LogStatement is written to the log even if privacy rules
+     * indicate that the word contents should not be logged.  It has no contents, and only serves to
+     * record the event and thereby make it easier to calculate word-level statistics even when the
+     * word contents are unknown.
      */
     private static final LogStatement LOGSTATEMENT_COMMITTEXT =
-            new LogStatement("CommitText", true, false, "committedText", "isBatchMode");
+            new LogStatement("CommitText", true /* isPotentiallyPrivate */,
+                    false /* isPotentiallyRevealing */, "committedText", "isBatchMode");
+    private static final LogStatement LOGSTATEMENT_COMMITTEXT_EVENT_HAPPENED =
+            new LogStatement("CommitTextEventHappened", false /* isPotentiallyPrivate */,
+                    false /* isPotentiallyRevealing */);
     private void enqueueCommitText(final String word, final boolean isBatchMode) {
+        // Event containing the word; will be published only if privacy checks pass
         enqueueEvent(LOGSTATEMENT_COMMITTEXT, word, isBatchMode);
+        // Event not containing the word; will always be published
+        enqueueEvent(LOGSTATEMENT_COMMITTEXT_EVENT_HAPPENED);
     }
 
     /**
@@ -1716,7 +1765,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     public static void suddenJumpingTouchEventHandler_onTouchEvent(final MotionEvent me) {
         if (me != null) {
             getInstance().enqueueEvent(LOGSTATEMENT_SUDDENJUMPINGTOUCHEVENTHANDLER_ONTOUCHEVENT,
-                    me.toString());
+                    MotionEvent.obtain(me));
         }
     }
 
@@ -1752,7 +1801,7 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
      */
     private static final LogStatement LOGSTATEMENT_LATINIME_ONENDBATCHINPUT =
             new LogStatement("LatinIMEOnEndBatchInput", true, false, "enteredText",
-                    "enteredWordPos");
+                    "enteredWordPos", "suggestedWords");
     public static void latinIME_onEndBatchInput(final CharSequence enteredText,
             final int enteredWordPos, final SuggestedWords suggestedWords) {
         final ResearchLogger researchLogger = getInstance();
@@ -1760,23 +1809,32 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
             researchLogger.mCurrentLogUnit.setWords(enteredText.toString());
         }
         researchLogger.enqueueEvent(LOGSTATEMENT_LATINIME_ONENDBATCHINPUT, enteredText,
-                enteredWordPos);
+                enteredWordPos, suggestedWords);
         researchLogger.mCurrentLogUnit.initializeSuggestions(suggestedWords);
         researchLogger.mStatistics.recordGestureInput(enteredText.length(),
                 SystemClock.uptimeMillis());
     }
 
+    private static final LogStatement LOGSTATEMENT_LATINIME_HANDLEBACKSPACE =
+            new LogStatement("LatinIMEHandleBackspace", true, false, "numCharacters");
     /**
      * Log a call to LatinIME.handleBackspace() that is not a batch delete.
      *
      * UserInput: The user is deleting one or more characters by hitting the backspace key once.
      * The covers single character deletes as well as deleting selections.
+     *
+     * @param numCharacters how many characters the backspace operation deleted
+     * @param shouldUncommitLogUnit whether to uncommit the last {@code LogUnit} in the
+     * {@code LogBuffer}
      */
-    private static final LogStatement LOGSTATEMENT_LATINIME_HANDLEBACKSPACE =
-            new LogStatement("LatinIMEHandleBackspace", true, false, "numCharacters");
-    public static void latinIME_handleBackspace(final int numCharacters) {
+    public static void latinIME_handleBackspace(final int numCharacters,
+            final boolean shouldUncommitLogUnit) {
         final ResearchLogger researchLogger = getInstance();
         researchLogger.enqueueEvent(LOGSTATEMENT_LATINIME_HANDLEBACKSPACE, numCharacters);
+        if (shouldUncommitLogUnit) {
+            ResearchLogger.getInstance().uncommitCurrentLogUnit(
+                    null, true /* dumpCurrentLogUnit */);
+        }
     }
 
     /**
@@ -1794,6 +1852,8 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
                 numCharacters);
         researchLogger.mStatistics.recordGestureDelete(deletedText.length(),
                 SystemClock.uptimeMillis());
+        researchLogger.uncommitCurrentLogUnit(deletedText.toString(),
+                false /* dumpCurrentLogUnit */);
     }
 
     /**
@@ -1837,6 +1897,20 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
     }
 
     /**
+     * Call this method when the logging system has attempted publication of an n-gram.
+     *
+     * Statistics are gathered about the success or failure.
+     *
+     * @param publishabilityResultCode a result code as defined by
+     * {@code MainLogBuffer.PUBLISHABILITY_*}
+     */
+    static void recordPublishabilityResultCode(final int publishabilityResultCode) {
+        final ResearchLogger researchLogger = getInstance();
+        final Statistics statistics = researchLogger.mStatistics;
+        statistics.recordPublishabilityResultCode(publishabilityResultCode);
+    }
+
+    /**
      * Log statistics.
      *
      * ContextualData, recorded at the end of a session.
@@ -1848,7 +1922,11 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
                     "averageTimeDuringRepeatedDelete", "averageTimeAfterDelete",
                     "dictionaryWordCount", "splitWordsCount", "gestureInputCount",
                     "gestureCharsCount", "gesturesDeletedCount", "manualSuggestionsCount",
-                    "revertCommitsCount", "correctedWordsCount", "autoCorrectionsCount");
+                    "revertCommitsCount", "correctedWordsCount", "autoCorrectionsCount",
+                    "publishableCount", "unpublishableStoppingCount",
+                    "unpublishableIncorrectWordCount", "unpublishableSampledTooRecentlyCount",
+                    "unpublishableDictionaryUnavailableCount", "unpublishableMayContainDigitCount",
+                    "unpublishableNotInDictionaryCount");
     private static void logStatistics() {
         final ResearchLogger researchLogger = getInstance();
         final Statistics statistics = researchLogger.mStatistics;
@@ -1863,6 +1941,10 @@ public class ResearchLogger implements SharedPreferences.OnSharedPreferenceChang
                 statistics.mGesturesInputCount, statistics.mGesturesCharsCount,
                 statistics.mGesturesDeletedCount, statistics.mManualSuggestionsCount,
                 statistics.mRevertCommitsCount, statistics.mCorrectedWordsCount,
-                statistics.mAutoCorrectionsCount);
+                statistics.mAutoCorrectionsCount, statistics.mPublishableCount,
+                statistics.mUnpublishableStoppingCount, statistics.mUnpublishableIncorrectWordCount,
+                statistics.mUnpublishableSampledTooRecently,
+                statistics.mUnpublishableDictionaryUnavailable,
+                statistics.mUnpublishableMayContainDigit, statistics.mUnpublishableNotInDictionary);
     }
 }

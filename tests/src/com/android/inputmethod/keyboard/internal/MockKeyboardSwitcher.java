@@ -19,7 +19,7 @@ package com.android.inputmethod.keyboard.internal;
 import android.text.TextUtils;
 
 import com.android.inputmethod.latin.Constants;
-import com.android.inputmethod.latin.RecapitalizeStatus;
+import com.android.inputmethod.latin.utils.RecapitalizeStatus;
 
 public class MockKeyboardSwitcher implements KeyboardState.SwitchActions {
     public interface MockConstants {
@@ -53,7 +53,7 @@ public class MockKeyboardSwitcher implements KeyboardState.SwitchActions {
     // Following InputConnection's behavior. Simulating InputType.TYPE_TEXT_FLAG_CAP_WORDS.
     private int mAutoCapsState = MockConstants.CAP_MODE_OFF;
 
-    private boolean mIsInDoubleTapTimeout;
+    private boolean mIsInDoubleTapShiftKeyTimeout;
     private int mLongPressTimeoutCode;
 
     private final KeyboardState mState = new KeyboardState(this);
@@ -81,7 +81,7 @@ public class MockKeyboardSwitcher implements KeyboardState.SwitchActions {
     }
 
     public void expireDoubleTapTimeout() {
-        mIsInDoubleTapTimeout = false;
+        mIsInDoubleTapShiftKeyTimeout = false;
     }
 
     @Override
@@ -120,46 +120,28 @@ public class MockKeyboardSwitcher implements KeyboardState.SwitchActions {
     }
 
     @Override
+    public void setEmojiKeyboard() {
+        // Just ignore.
+    }
+
+    @Override
     public void requestUpdatingShiftState() {
         mState.onUpdateShiftState(mAutoCapsState, RecapitalizeStatus.NOT_A_RECAPITALIZE_MODE);
     }
 
     @Override
-    public void startDoubleTapTimer() {
-        mIsInDoubleTapTimeout = true;
+    public void startDoubleTapShiftKeyTimer() {
+        mIsInDoubleTapShiftKeyTimeout = true;
     }
 
     @Override
-    public void cancelDoubleTapTimer() {
-        mIsInDoubleTapTimeout = false;
+    public void cancelDoubleTapShiftKeyTimer() {
+        mIsInDoubleTapShiftKeyTimeout = false;
     }
 
     @Override
-    public boolean isInDoubleTapTimeout() {
-        return mIsInDoubleTapTimeout;
-    }
-
-    @Override
-    public void startLongPressTimer(final int code) {
-        mLongPressTimeoutCode = code;
-    }
-
-    @Override
-    public void cancelLongPressTimer() {
-        mLongPressTimeoutCode = 0;
-    }
-
-    @Override
-    public void hapticAndAudioFeedback(final int code) {
-        // Nothing to do.
-    }
-
-    public void onLongPressTimeout(final int code) {
-        // TODO: Handle simultaneous long presses.
-        if (mLongPressTimeoutCode == code) {
-            mLongPressTimeoutCode = 0;
-            mState.onLongPressTimeout(code);
-        }
+    public boolean isInDoubleTapShiftKeyTimeout() {
+        return mIsInDoubleTapShiftKeyTimeout;
     }
 
     public void updateShiftState() {

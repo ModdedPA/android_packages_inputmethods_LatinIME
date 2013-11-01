@@ -35,8 +35,10 @@ import android.view.inputmethod.EditorInfo;
 import com.android.inputmethod.keyboard.Key;
 import com.android.inputmethod.keyboard.Keyboard;
 import com.android.inputmethod.keyboard.KeyboardView;
-import com.android.inputmethod.latin.CollectionUtils;
-import com.android.inputmethod.latin.CoordinateUtils;
+import com.android.inputmethod.latin.settings.Settings;
+import com.android.inputmethod.latin.settings.SettingsValues;
+import com.android.inputmethod.latin.utils.CollectionUtils;
+import com.android.inputmethod.latin.utils.CoordinateUtils;
 
 /**
  * Exposes a virtual view sub-tree for {@link KeyboardView} and generates
@@ -157,7 +159,7 @@ public final class AccessibilityEntityProvider extends AccessibilityNodeProvider
 
             // Add the virtual children of the root View.
             final Keyboard keyboard = mKeyboardView.getKeyboard();
-            final Key[] keys = keyboard.mKeys;
+            final Key[] keys = keyboard.getKeys();
             for (Key key : keys) {
                 final int childVirtualViewId = generateVirtualViewIdForKey(key);
                 rootInfo.addChild(mKeyboardView, childVirtualViewId);
@@ -172,7 +174,7 @@ public final class AccessibilityEntityProvider extends AccessibilityNodeProvider
             return null;
         }
         final String keyDescription = getKeyDescription(key);
-        final Rect boundsInParent = key.mHitBox;
+        final Rect boundsInParent = key.getHitBox();
 
         // Calculate the key's in-screen bounds.
         mTempBoundsInScreen.set(boundsInParent);
@@ -208,8 +210,8 @@ public final class AccessibilityEntityProvider extends AccessibilityNodeProvider
      * @param key The key to press.
      */
     void simulateKeyPress(final Key key) {
-        final int x = key.mHitBox.centerX();
-        final int y = key.mHitBox.centerY();
+        final int x = key.getHitBox().centerX();
+        final int y = key.getHitBox().centerY();
         final long downTime = SystemClock.uptimeMillis();
         final MotionEvent downEvent = MotionEvent.obtain(
                 downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0);
@@ -285,9 +287,15 @@ public final class AccessibilityEntityProvider extends AccessibilityNodeProvider
     private String getKeyDescription(final Key key) {
         final EditorInfo editorInfo = mInputMethodService.getCurrentInputEditorInfo();
         final boolean shouldObscure = mAccessibilityUtils.shouldObscureInput(editorInfo);
-        final String keyDescription = mKeyCodeDescriptionMapper.getDescriptionForKey(
+        final SettingsValues currentSettings = Settings.getInstance().getCurrent();
+        final String keyCodeDescription = mKeyCodeDescriptionMapper.getDescriptionForKey(
                 mKeyboardView.getContext(), mKeyboardView.getKeyboard(), key, shouldObscure);
-        return keyDescription;
+        if (currentSettings.isWordSeparator(key.getCode())) {
+            return mAccessibilityUtils.getAutoCorrectionDescription(
+                    keyCodeDescription, shouldObscure);
+        } else {
+            return keyCodeDescription;
+        }
     }
 
     /**
@@ -300,7 +308,7 @@ public final class AccessibilityEntityProvider extends AccessibilityNodeProvider
         }
         mVirtualViewIdToKey.clear();
 
-        final Key[] keys = keyboard.mKeys;
+        final Key[] keys = keyboard.getKeys();
         for (Key key : keys) {
             final int virtualViewId = generateVirtualViewIdForKey(key);
             mVirtualViewIdToKey.put(virtualViewId, key);
@@ -325,6 +333,6 @@ public final class AccessibilityEntityProvider extends AccessibilityNodeProvider
         // The key x- and y-coordinates are stable between layout changes.
         // Generate an identifier by bit-shifting the x-coordinate to the
         // left-half of the integer and OR'ing with the y-coordinate.
-        return ((0xFFFF & key.mX) << (Integer.SIZE / 2)) | (0xFFFF & key.mY);
+        return ((0xFFFF & key.getX()) << (Integer.SIZE / 2)) | (0xFFFF & key.getY());
     }
 }

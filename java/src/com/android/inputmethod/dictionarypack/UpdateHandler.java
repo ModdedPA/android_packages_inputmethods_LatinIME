@@ -38,6 +38,8 @@ import android.util.Log;
 import com.android.inputmethod.compat.ConnectivityManagerCompatUtils;
 import com.android.inputmethod.compat.DownloadManagerCompatUtils;
 import com.android.inputmethod.latin.R;
+import com.android.inputmethod.latin.utils.ApplicationUtils;
+import com.android.inputmethod.latin.utils.DebugLogUtils;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -171,25 +173,27 @@ public final class UpdateHandler {
      * Download latest metadata from the server through DownloadManager for all known clients
      * @param context The context for retrieving resources
      * @param updateNow Whether we should update NOW, or respect bandwidth policies
+     * @return true if an update successfully started, false otherwise.
      */
-    public static void update(final Context context, final boolean updateNow) {
+    public static boolean tryUpdate(final Context context, final boolean updateNow) {
         // TODO: loop through all clients instead of only doing the default one.
         final TreeSet<String> uris = new TreeSet<String>();
         final Cursor cursor = MetadataDbHelper.queryClientIds(context);
-        if (null == cursor) return;
+        if (null == cursor) return false;
         try {
-            if (!cursor.moveToFirst()) return;
+            if (!cursor.moveToFirst()) return false;
             do {
                 final String clientId = cursor.getString(0);
                 final String metadataUri =
                         MetadataDbHelper.getMetadataUriAsString(context, clientId);
-                PrivateLog.log("Update for clientId " + Utils.s(clientId));
-                Utils.l("Update for clientId", clientId, " which uses URI ", metadataUri);
+                PrivateLog.log("Update for clientId " + DebugLogUtils.s(clientId));
+                DebugLogUtils.l("Update for clientId", clientId, " which uses URI ", metadataUri);
                 uris.add(metadataUri);
             } while (cursor.moveToNext());
         } finally {
             cursor.close();
         }
+        boolean started = false;
         for (final String metadataUri : uris) {
             if (!TextUtils.isEmpty(metadataUri)) {
                 // If the metadata URI is empty, that means we should never update it at all.
@@ -198,8 +202,10 @@ public final class UpdateHandler {
                 // is a bug and it happens anyway, doing nothing is the right thing to do.
                 // For more information, {@see DictionaryProvider#insert(Uri, ContentValues)}.
                 updateClientsWithMetadataUri(context, updateNow, metadataUri);
+                started = true;
             }
         }
+        return started;
     }
 
     /**
@@ -211,14 +217,14 @@ public final class UpdateHandler {
      */
     private static void updateClientsWithMetadataUri(final Context context,
             final boolean updateNow, final String metadataUri) {
-        PrivateLog.log("Update for metadata URI " + Utils.s(metadataUri));
+        PrivateLog.log("Update for metadata URI " + DebugLogUtils.s(metadataUri));
         // Adding a disambiguator to circumvent a bug in older versions of DownloadManager.
         // DownloadManager also stupidly cuts the extension to replace with its own that it
         // gets from the content-type. We need to circumvent this.
         final String disambiguator = "#" + System.currentTimeMillis()
-                + com.android.inputmethod.latin.Utils.getVersionName(context) + ".json";
+                + ApplicationUtils.getVersionName(context) + ".json";
         final Request metadataRequest = new Request(Uri.parse(metadataUri + disambiguator));
-        Utils.l("Request =", metadataRequest);
+        DebugLogUtils.l("Request =", metadataRequest);
 
         final Resources res = context.getResources();
         // By default, download over roaming is allowed and all network types are allowed too.
@@ -254,7 +260,7 @@ public final class UpdateHandler {
         final long downloadId;
         synchronized (sSharedIdProtector) {
             downloadId = manager.enqueue(metadataRequest);
-            Utils.l("Metadata download requested with id", downloadId);
+            DebugLogUtils.l("Metadata download requested with id", downloadId);
             // If there is already a download in progress, it's been there for a while and
             // there is probably something wrong with download manager. It's best to just
             // overwrite the id and request it again. If the old one happens to finish
@@ -266,23 +272,22 @@ public final class UpdateHandler {
     }
 
     /**
-     * Cancels a pending update, if there is one.
+     * Cancels downloading a file, if there is one for this URI.
      *
-     * If none, this is a no-op.
+     * If we are not currently downloading the file at this URI, this is a no-op.
      *
      * @param context the context to open the database on
-     * @param clientId the id of the client
+     * @param metadataUri the URI to cancel
      * @param manager an instance of DownloadManager
      */
     private static void cancelUpdateWithDownloadManager(final Context context,
-            final String clientId, final DownloadManager manager) {
+            final String metadataUri, final DownloadManager manager) {
         synchronized (sSharedIdProtector) {
             final long metadataDownloadId =
-                    MetadataDbHelper.getMetadataDownloadIdForClient(context, clientId);
+                    MetadataDbHelper.getMetadataDownloadIdForURI(context, metadataUri);
             if (NOT_AN_ID == metadataDownloadId) return;
             manager.remove(metadataDownloadId);
-            writeMetadataDownloadId(context,
-                    MetadataDbHelper.getMetadataUriAsString(context, clientId), NOT_AN_ID);
+            writeMetadataDownloadId(context, metadataUri, NOT_AN_ID);
         }
         // Consider a cancellation as a failure. As such, inform listeners that the download
         // has failed.
@@ -292,10 +297,10 @@ public final class UpdateHandler {
     }
 
     /**
-     * Cancels a pending update, if there is one.
+     * Cancels a pending update for this client, if there is one.
      *
-     * If there is none, this is a no-op. This is a helper method that gets the
-     * download manager service.
+     * If we are not currently updating metadata for this client, this is a no-op. This is a helper
+     * method that gets the download manager service and the metadata URI for this client.
      *
      * @param context the context, to get an instance of DownloadManager
      * @param clientId the ID of the client we want to cancel the update of
@@ -303,7 +308,8 @@ public final class UpdateHandler {
     public static void cancelUpdate(final Context context, final String clientId) {
         final DownloadManager manager =
                     (DownloadManager) context.getSystemService(Context.DOWNLOAD_SERVICE);
-        if (null != manager) cancelUpdateWithDownloadManager(context, clientId, manager);
+        final String metadataUri = MetadataDbHelper.getMetadataUriAsString(context, clientId);
+        if (null != manager) cancelUpdateWithDownloadManager(context, metadataUri, manager);
     }
 
     /**
@@ -326,11 +332,11 @@ public final class UpdateHandler {
      */
     public static long registerDownloadRequest(final DownloadManager manager, final Request request,
             final SQLiteDatabase db, final String id, final int version) {
-        Utils.l("RegisterDownloadRequest for word list id : ", id, ", version ", version);
+        DebugLogUtils.l("RegisterDownloadRequest for word list id : ", id, ", version ", version);
         final long downloadId;
         synchronized (sSharedIdProtector) {
             downloadId = manager.enqueue(request);
-            Utils.l("Download requested with id", downloadId);
+            DebugLogUtils.l("Download requested with id", downloadId);
             MetadataDbHelper.markEntryAsDownloading(db, id, version, downloadId);
         }
         return downloadId;
@@ -416,7 +422,7 @@ public final class UpdateHandler {
         // Get and check the ID of the file that was downloaded
         final long fileId = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, NOT_AN_ID);
         PrivateLog.log("Download finished with id " + fileId);
-        Utils.l("DownloadFinished with id", fileId);
+        DebugLogUtils.l("DownloadFinished with id", fileId);
         if (NOT_AN_ID == fileId) return; // Spurious wake-up: ignore
 
         final DownloadManager manager =
@@ -426,7 +432,7 @@ public final class UpdateHandler {
         final ArrayList<DownloadRecord> recordList =
                 getDownloadRecordsForCompletedDownloadInfo(context, downloadInfo);
         if (null == recordList) return; // It was someone else's download.
-        Utils.l("Received result for download ", fileId);
+        DebugLogUtils.l("Received result for download ", fileId);
 
         // TODO: handle gracefully a null pointer here. This is practically impossible because
         // we come here only when DownloadManager explicitly called us when it ended a
@@ -503,7 +509,7 @@ public final class UpdateHandler {
     private static void publishUpdateCycleCompletedEvent(final Context context) {
         // Even if this is not successful, we have to publish the new state.
         PrivateLog.log("Publishing update cycle completed event");
-        Utils.l("Publishing update cycle completed event");
+        DebugLogUtils.l("Publishing update cycle completed event");
         for (UpdateEventListener listener : linkedCopyOfList(sUpdateEventListeners)) {
             listener.updateCycleCompleted();
         }
@@ -517,12 +523,12 @@ public final class UpdateHandler {
             // {@link handleWordList(Context,InputStream,ContentValues)}.
             // Handle the downloaded file according to its type
             if (downloadRecord.isMetadata()) {
-                Utils.l("Data D/L'd is metadata for", downloadRecord.mClientId);
+                DebugLogUtils.l("Data D/L'd is metadata for", downloadRecord.mClientId);
                 // #handleMetadata() closes its InputStream argument
                 handleMetadata(context, new ParcelFileDescriptor.AutoCloseInputStream(
                         manager.openDownloadedFile(fileId)), downloadRecord.mClientId);
             } else {
-                Utils.l("Data D/L'd is a word list");
+                DebugLogUtils.l("Data D/L'd is a word list");
                 final int wordListStatus = downloadRecord.mAttributes.getAsInteger(
                         MetadataDbHelper.STATUS_COLUMN);
                 if (MetadataDbHelper.STATUS_DOWNLOADING == wordListStatus) {
@@ -582,7 +588,7 @@ public final class UpdateHandler {
      */
     private static void handleMetadata(final Context context, final InputStream stream,
             final String clientId) throws IOException, BadFormatException {
-        Utils.l("Entering handleMetadata");
+        DebugLogUtils.l("Entering handleMetadata");
         final List<WordListMetadata> newMetadata;
         final InputStreamReader reader = new InputStreamReader(stream);
         try {
@@ -592,7 +598,7 @@ public final class UpdateHandler {
             reader.close();
         }
 
-        Utils.l("Downloaded metadata :", newMetadata);
+        DebugLogUtils.l("Downloaded metadata :", newMetadata);
         PrivateLog.log("Downloaded metadata\n" + newMetadata);
 
         final ActionBatch actions = computeUpgradeTo(context, clientId, newMetadata);
@@ -617,7 +623,7 @@ public final class UpdateHandler {
         // DownloadManager does not have the ability to put the file directly where we want
         // it, so we had it download to a temporary place. Now we move it. It will be deleted
         // automatically by DownloadManager.
-        Utils.l("Downloaded a new word list :", downloadRecord.mAttributes.getAsString(
+        DebugLogUtils.l("Downloaded a new word list :", downloadRecord.mAttributes.getAsString(
                 MetadataDbHelper.DESCRIPTION_COLUMN), "for", downloadRecord.mClientId);
         PrivateLog.log("Downloaded a new word list with description : "
                 + downloadRecord.mAttributes.getAsString(MetadataDbHelper.DESCRIPTION_COLUMN)
@@ -676,9 +682,9 @@ public final class UpdateHandler {
      */
     private static void copyFile(final InputStream in, final OutputStream out)
             throws IOException {
-        Utils.l("Copying files");
+        DebugLogUtils.l("Copying files");
         if (!(in instanceof FileInputStream) || !(out instanceof FileOutputStream)) {
-            Utils.l("Not the right types");
+            DebugLogUtils.l("Not the right types");
             copyFileFallback(in, out);
         } else {
             try {
@@ -687,7 +693,7 @@ public final class UpdateHandler {
                 sourceChannel.transferTo(0, Integer.MAX_VALUE, destinationChannel);
             } catch (IOException e) {
                 // Can't work with channels, or something went wrong. Copy by hand.
-                Utils.l("Won't work");
+                DebugLogUtils.l("Won't work");
                 copyFileFallback(in, out);
             }
         }
@@ -702,7 +708,7 @@ public final class UpdateHandler {
      */
     private static void copyFileFallback(final InputStream in, final OutputStream out)
             throws IOException {
-        Utils.l("Falling back to slow copy");
+        DebugLogUtils.l("Falling back to slow copy");
         final byte[] buffer = new byte[FILE_COPY_BUFFER_SIZE];
         for (int readBytes = in.read(buffer); readBytes >= 0; readBytes = in.read(buffer))
             out.write(buffer, 0, readBytes);
@@ -717,10 +723,10 @@ public final class UpdateHandler {
      */
     private static String getTempFileName(final Context context, final String locale)
             throws IOException {
-        Utils.l("Entering openTempFileOutput");
+        DebugLogUtils.l("Entering openTempFileOutput");
         final File dir = context.getFilesDir();
         final File f = File.createTempFile(locale + "___", DICT_FILE_SUFFIX, dir);
-        Utils.l("File name is", f.getName());
+        DebugLogUtils.l("File name is", f.getName());
         return f.getName();
     }
 
@@ -741,7 +747,7 @@ public final class UpdateHandler {
             final String clientId, List<WordListMetadata> from, List<WordListMetadata> to) {
         final ActionBatch actions = new ActionBatch();
         // Upgrade existing word lists
-        Utils.l("Comparing dictionaries");
+        DebugLogUtils.l("Comparing dictionaries");
         final Set<String> wordListIds = new TreeSet<String>();
         // TODO: Can these be null?
         if (null == from) from = new ArrayList<WordListMetadata>();
@@ -756,7 +762,7 @@ public final class UpdateHandler {
             final WordListMetadata newInfo = null == metadataInfo
                     || metadataInfo.mFormatVersion > MAXIMUM_SUPPORTED_FORMAT_VERSION
                             ? null : metadataInfo;
-            Utils.l("Considering updating ", id, "currentInfo =", currentInfo);
+            DebugLogUtils.l("Considering updating ", id, "currentInfo =", currentInfo);
 
             if (null == currentInfo && null == newInfo) {
                 // This may happen if a new word list appeared that we can't handle.
@@ -767,7 +773,7 @@ public final class UpdateHandler {
                     // We may come here if there is a new word list that we can't handle.
                     Log.i(TAG, "Can't handle word list with id '" + id + "' because it has format"
                             + " version " + metadataInfo.mFormatVersion + " and the maximum version"
-                            + "we can handle is " + MAXIMUM_SUPPORTED_FORMAT_VERSION);
+                            + " we can handle is " + MAXIMUM_SUPPORTED_FORMAT_VERSION);
                 }
                 continue;
             } else if (null == currentInfo) {

@@ -18,15 +18,14 @@ package com.android.inputmethod.keyboard;
 
 import static com.android.inputmethod.latin.Constants.Subtype.ExtraValue.KEYBOARD_LAYOUT_SET;
 
-import android.content.res.Configuration;
 import android.text.InputType;
 import android.text.TextUtils;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodSubtype;
 
 import com.android.inputmethod.compat.EditorInfoCompatUtils;
-import com.android.inputmethod.latin.InputTypeUtils;
-import com.android.inputmethod.latin.SubtypeLocale;
+import com.android.inputmethod.latin.utils.InputTypeUtils;
+import com.android.inputmethod.latin.utils.SubtypeLocaleUtils;
 
 import java.util.Arrays;
 import java.util.Locale;
@@ -55,11 +54,16 @@ public final class KeyboardId {
     public static final int ELEMENT_PHONE = 7;
     public static final int ELEMENT_PHONE_SYMBOLS = 8;
     public static final int ELEMENT_NUMBER = 9;
+    public static final int ELEMENT_EMOJI_RECENTS = 10;
+    public static final int ELEMENT_EMOJI_CATEGORY1 = 11;
+    public static final int ELEMENT_EMOJI_CATEGORY2 = 12;
+    public static final int ELEMENT_EMOJI_CATEGORY3 = 13;
+    public static final int ELEMENT_EMOJI_CATEGORY4 = 14;
+    public static final int ELEMENT_EMOJI_CATEGORY5 = 15;
+    public static final int ELEMENT_EMOJI_CATEGORY6 = 16;
 
     public final InputMethodSubtype mSubtype;
     public final Locale mLocale;
-    // TODO: Remove this member. It is used only for logging purpose.
-    public final int mOrientation;
     public final int mWidth;
     public final int mHeight;
     public final int mMode;
@@ -76,8 +80,7 @@ public final class KeyboardId {
 
     public KeyboardId(final int elementId, final KeyboardLayoutSet.Params params) {
         mSubtype = params.mSubtype;
-        mLocale = SubtypeLocale.getSubtypeLocale(mSubtype);
-        mOrientation = params.mOrientation;
+        mLocale = SubtypeLocaleUtils.getSubtypeLocale(mSubtype);
         mWidth = params.mKeyboardWidth;
         mHeight = params.mKeyboardHeight;
         mMode = params.mMode;
@@ -101,7 +104,6 @@ public final class KeyboardId {
 
     private static int computeHashCode(final KeyboardId id) {
         return Arrays.hashCode(new Object[] {
-                id.mOrientation,
                 id.mElementId,
                 id.mMode,
                 id.mWidth,
@@ -123,8 +125,7 @@ public final class KeyboardId {
     private boolean equals(final KeyboardId other) {
         if (other == this)
             return true;
-        return other.mOrientation == mOrientation
-                && other.mElementId == mElementId
+        return other.mElementId == mElementId
                 && other.mMode == mMode
                 && other.mWidth == mWidth
                 && other.mHeight == mHeight
@@ -185,13 +186,10 @@ public final class KeyboardId {
 
     @Override
     public String toString() {
-        final String orientation = (mOrientation == Configuration.ORIENTATION_PORTRAIT)
-                ? "port" : "land";
-        return String.format("[%s %s:%s %s:%dx%d %s %s %s%s%s%s%s%s%s%s%s]",
+        return String.format(Locale.ROOT, "[%s %s:%s %dx%d %s %s %s%s%s%s%s%s%s%s%s]",
                 elementIdToName(mElementId),
-                mLocale,
-                mSubtype.getExtraValueOf(KEYBOARD_LAYOUT_SET),
-                orientation, mWidth, mHeight,
+                mLocale, mSubtype.getExtraValueOf(KEYBOARD_LAYOUT_SET),
+                mWidth, mHeight,
                 modeName(mMode),
                 imeAction(),
                 (navigateNext() ? "navigateNext" : ""),
@@ -226,6 +224,13 @@ public final class KeyboardId {
         case ELEMENT_PHONE: return "phone";
         case ELEMENT_PHONE_SYMBOLS: return "phoneSymbols";
         case ELEMENT_NUMBER: return "number";
+        case ELEMENT_EMOJI_RECENTS: return "emojiRecents";
+        case ELEMENT_EMOJI_CATEGORY1: return "emojiCategory1";
+        case ELEMENT_EMOJI_CATEGORY2: return "emojiCategory2";
+        case ELEMENT_EMOJI_CATEGORY3: return "emojiCategory3";
+        case ELEMENT_EMOJI_CATEGORY4: return "emojiCategory4";
+        case ELEMENT_EMOJI_CATEGORY5: return "emojiCategory5";
+        case ELEMENT_EMOJI_CATEGORY6: return "emojiCategory6";
         default: return null;
         }
     }

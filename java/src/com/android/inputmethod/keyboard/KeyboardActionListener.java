@@ -20,16 +20,16 @@ import com.android.inputmethod.latin.Constants;
 import com.android.inputmethod.latin.InputPointers;
 
 public interface KeyboardActionListener {
-
     /**
      * Called when the user presses a key. This is sent before the {@link #onCodeInput} is called.
      * For keys that repeat, this is only called once.
      *
      * @param primaryCode the unicode of the key being pressed. If the touch is not on a valid key,
      *            the value will be zero.
+     * @param repeatCount how many times the key was repeated. Zero if it is the first press.
      * @param isSinglePointer true if pressing has occurred while no other key is being pressed.
      */
-    public void onPressKey(int primaryCode, boolean isSinglePointer);
+    public void onPressKey(int primaryCode, int repeatCount, boolean isSinglePointer);
 
     /**
      * Called when the user releases a key. This is sent after the {@link #onCodeInput} is called.
@@ -99,11 +99,11 @@ public interface KeyboardActionListener {
      */
     public boolean onCustomRequest(int requestCode);
 
-    public static class Adapter implements KeyboardActionListener {
-        public static final Adapter EMPTY_LISTENER = new Adapter();
+    public static final KeyboardActionListener EMPTY_LISTENER = new Adapter();
 
+    public static class Adapter implements KeyboardActionListener {
         @Override
-        public void onPressKey(int primaryCode, boolean isSinglePointer) {}
+        public void onPressKey(int primaryCode, int repeatCount, boolean isSinglePointer) {}
         @Override
         public void onReleaseKey(int primaryCode, boolean withSliding) {}
         @Override

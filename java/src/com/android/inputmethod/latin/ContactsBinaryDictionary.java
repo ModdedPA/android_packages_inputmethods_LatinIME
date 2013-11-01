@@ -22,6 +22,7 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.database.ContentObserver;
 import android.database.Cursor;
+import android.database.sqlite.SQLiteException;
 import android.net.Uri;
 import android.os.SystemClock;
 import android.provider.BaseColumns;
@@ -29,6 +30,8 @@ import android.provider.ContactsContract;
 import android.provider.ContactsContract.Contacts;
 import android.text.TextUtils;
 import android.util.Log;
+
+import com.android.inputmethod.latin.utils.StringUtils;
 
 import java.util.List;
 import java.util.Locale;
@@ -68,7 +71,8 @@ public class ContactsBinaryDictionary extends ExpandableBinaryDictionary {
     private final boolean mUseFirstLastBigrams;
 
     public ContactsBinaryDictionary(final Context context, final Locale locale) {
-        super(context, getFilenameWithLocale(NAME, locale.toString()), Dictionary.TYPE_CONTACTS);
+        super(context, getFilenameWithLocale(NAME, locale.toString()), Dictionary.TYPE_CONTACTS,
+                false /* isUpdatable */);
         mLocale = locale;
         mUseFirstLastBigrams = useFirstLastBigramsForLocale(locale);
         registerObserver(context);
@@ -107,7 +111,6 @@ public class ContactsBinaryDictionary extends ExpandableBinaryDictionary {
 
     @Override
     public void loadDictionaryAsync() {
-        clearFusionDictionary();
         loadDeviceAccountsEmailAddresses();
         loadDictionaryAsyncForUri(ContactsContract.Profile.CONTENT_URI);
         // TODO: Switch this URL to the newer ContactsContract too
@@ -124,7 +127,7 @@ public class ContactsBinaryDictionary extends ExpandableBinaryDictionary {
             if (DEBUG) {
                 Log.d(TAG, "loadAccountVocabulary: " + word);
             }
-            super.addWord(word, null /* shortcut */, FREQUENCY_FOR_CONTACTS,
+            super.addWord(word, null /* shortcut */, FREQUENCY_FOR_CONTACTS, 0 /* shortcutFreq */,
                     false /* isNotAWord */);
         }
     }
@@ -143,8 +146,10 @@ public class ContactsBinaryDictionary extends ExpandableBinaryDictionary {
                     cursor.close();
                 }
             }
-        } catch (IllegalStateException e) {
-            Log.e(TAG, "Contacts DB is having problems");
+        } catch (final SQLiteException e) {
+            Log.e(TAG, "SQLiteException in the remote Contacts process.", e);
+        } catch (final IllegalStateException e) {
+            Log.e(TAG, "Contacts DB is having problems", e);
         }
     }
 
@@ -171,14 +176,18 @@ public class ContactsBinaryDictionary extends ExpandableBinaryDictionary {
     private int getContactCount() {
         // TODO: consider switching to a rawQuery("select count(*)...") on the database if
         // performance is a bottleneck.
-        final Cursor cursor = mContext.getContentResolver().query(
-                Contacts.CONTENT_URI, PROJECTION_ID_ONLY, null, null, null);
-        if (cursor != null) {
-            try {
-                return cursor.getCount();
-            } finally {
-                cursor.close();
+        try {
+            final Cursor cursor = mContext.getContentResolver().query(
+                    Contacts.CONTENT_URI, PROJECTION_ID_ONLY, null, null, null);
+            if (cursor != null) {
+                try {
+                    return cursor.getCount();
+                } finally {
+                    cursor.close();
+                }
             }
+        } catch (final SQLiteException e) {
+            Log.e(TAG, "SQLiteException in the remote Contacts process.", e);
         }
         return 0;
     }
@@ -204,10 +213,11 @@ public class ContactsBinaryDictionary extends ExpandableBinaryDictionary {
                         Log.d(TAG, "addName " + name + ", " + word + ", " + prevWord);
                     }
                     super.addWord(word, null /* shortcut */, FREQUENCY_FOR_CONTACTS,
-                            false /* isNotAWord */);
+                            0 /* shortcutFreq */, false /* isNotAWord */);
                     if (!TextUtils.isEmpty(prevWord)) {
                         if (mUseFirstLastBigrams) {
-                            super.setBigram(prevWord, word, FREQUENCY_FOR_CONTACTS_BIGRAM);
+                            super.addBigram(prevWord, word, FREQUENCY_FOR_CONTACTS_BIGRAM,
+                                    0 /* lastModifiedTime */);
                         }
                     }
                     prevWord = word;
@@ -231,6 +241,11 @@ public class ContactsBinaryDictionary extends ExpandableBinaryDictionary {
             }
         }
         return end;
+    }
+
+    @Override
+    protected boolean needsToReloadBeforeWriting() {
+        return true;
     }
 
     @Override

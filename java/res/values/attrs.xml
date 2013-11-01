@@ -1,17 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Copyright (C) 2010 The Android Open Source Project
-
-     Licensed under the Apache License, Version 2.0 (the "License");
-     you may not use this file except in compliance with the License.
-     You may obtain a copy of the License at
-
-          http://www.apache.org/licenses/LICENSE-2.0
-
-     Unless required by applicable law or agreed to in writing, software
-     distributed under the License is distributed on an "AS IS" BASIS,
-     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-     See the License for the specific language governing permissions and
-     limitations under the License.
+<!--
+/*
+**
+** Copyright 2010, The Android Open Source Project
+**
+** Licensed under the Apache License, Version 2.0 (the "License");
+** you may not use this file except in compliance with the License.
+** You may obtain a copy of the License at
+**
+**     http://www.apache.org/licenses/LICENSE-2.0
+**
+** Unless required by applicable law or agreed to in writing, software
+** distributed under the License is distributed on an "AS IS" BASIS,
+** WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+** See the License for the specific language governing permissions and
+** limitations under the License.
+*/
 -->
 
 <resources>
@@ -22,16 +26,18 @@
         <attr name="keyboardViewStyle" format="reference" />
         <!-- MainKeyboardView style -->
         <attr name="mainKeyboardViewStyle" format="reference" />
+        <!-- EmojiPalettesView style -->
+        <attr name="emojiPalettesViewStyle" format="reference" />
         <!-- MoreKeysKeyboard style -->
         <attr name="moreKeysKeyboardStyle" format="reference" />
         <!-- MoreKeysKeyboardView style -->
         <attr name="moreKeysKeyboardViewStyle" format="reference" />
-        <attr name="moreKeysKeyboardPanelStyle" format="reference" />
+        <!-- MoreKeysKeyboardView container style -->
+        <attr name="moreKeysKeyboardContainerStyle" format="reference" />
         <!-- Suggestions strip style -->
-        <attr name="suggestionsStripBackgroundStyle" format="reference" />
         <attr name="suggestionStripViewStyle" format="reference" />
-        <attr name="moreSuggestionsViewStyle" format="reference" />
-        <attr name="suggestionBackgroundStyle" format="reference" />
+        <!-- Suggestion word style -->
+        <attr name="suggestionWordStyle" format="reference" />
     </declare-styleable>
 
     <declare-styleable name="KeyboardView">
@@ -39,6 +45,8 @@
              possible states: normal, pressed, checkable, checkable+pressed, checkable+checked,
              checkable+checked+pressed. -->
         <attr name="keyBackground" format="reference" />
+        <!-- Image for the functional key used in Emoji layout. -->
+        <attr name="keyBackgroundEmojiFunctional" format="reference" />
 
         <!-- Horizontal padding of left/right aligned key label to the edge of the key. -->
         <attr name="keyLabelHorizontalPadding" format="dimension" />
@@ -159,9 +167,13 @@
         <attr name="suppressKeyPreviewAfterBatchInputDuration" format="integer" />
     </declare-styleable>
 
+    <declare-styleable name="EmojiPalettesView">
+        <attr name="emojiTabLabelColor" format="reference" />
+    </declare-styleable>
+
     <declare-styleable name="SuggestionStripView">
         <attr name="suggestionStripOption" format="integer">
-            <!-- This should be aligned with SuggestionStripViewParams.AUTO_CORRECT_* and etc. -->
+            <!-- This should be aligned with SuggestionStripLayoutHelper.AUTO_CORRECT_* and etc. -->
             <flag name="autoCorrectBold" value="0x01" />
             <flag name="autoCorrectUnderline" value="0x02" />
             <flag name="validTypedWordBold" value="0x04" />
@@ -170,10 +182,6 @@
         <attr name="colorTypedWord" format="color" />
         <attr name="colorAutoCorrect" format="color" />
         <attr name="colorSuggested" format="color" />
-        <attr name="alphaValidTypedWord" format="fraction" />
-        <attr name="alphaTypedWord" format="fraction" />
-        <attr name="alphaAutoCorrect" format="fraction" />
-        <attr name="alphaSuggested" format="fraction" />
         <attr name="alphaObsoleted" format="fraction" />
         <attr name="suggestionsCountInStrip" format="integer" />
         <attr name="centerSuggestionPercentile" format="fraction" />
@@ -217,6 +225,13 @@
         <attr name="iconLanguageSwitchKey" format="reference" />
         <attr name="iconZwnjKey" format="reference" />
         <attr name="iconZwjKey" format="reference" />
+        <attr name="iconImeKey" format="reference" />
+        <attr name="iconEmojiKey" format="reference" />
+    </declare-styleable>
+
+    <declare-styleable name="Keyboard_GridRows">
+        <attr name="codesArray" format="reference" />
+        <attr name="textsArray" format="reference" />
     </declare-styleable>
 
     <declare-styleable name="Keyboard_Key">
@@ -240,11 +255,12 @@
         <attr name="maxMoreKeysColumn" format="integer" />
         <attr name="backgroundType" format="enum">
             <!-- This should be aligned with Key.BACKGROUND_TYPE_* -->
-            <enum name="normal" value="0" />
-            <enum name="functional" value="1" />
-            <enum name="action" value="2" />
-            <enum name="stickyOff" value="3" />
-            <enum name="stickyOn" value="4" />
+            <enum name="empty" value="0" />
+            <enum name="normal" value="1" />
+            <enum name="functional" value="2" />
+            <enum name="action" value="3" />
+            <enum name="stickyOff" value="4" />
+            <enum name="stickyOn" value="5" />
         </attr>
         <!-- The key action flags. -->
         <attr name="keyActionFlags" format="integer">
@@ -365,6 +381,7 @@
     </declare-styleable>
 
     <declare-styleable name="Keyboard_Case">
+        <attr name="keyboardLayoutSet" format="string" />
         <!-- This should be aligned with KeyboardLayoutSet_Element's elementName. -->
         <attr name="keyboardLayoutSetElement" format="enum|string">
             <enum name="alphabet" value="0" />
@@ -377,6 +394,13 @@
             <enum name="phone" value="7"  />
             <enum name="phoneSymbols" value="8"  />
             <enum name="number" value="9"  />
+            <enum name="emojiRecents" value="10" />
+            <enum name="emojiCategory1" value="11" />
+            <enum name="emojiCategory2" value="12" />
+            <enum name="emojiCategory3" value="13" />
+            <enum name="emojiCategory4" value="14" />
+            <enum name="emojiCategory5" value="15" />
+            <enum name="emojiCategory6" value="16" />
         </attr>
         <!-- This should be aligned with KeyboardId.MODE_* -->
         <attr name="mode" format="enum|string">
@@ -432,6 +456,13 @@
             <enum name="phone" value="7"  />
             <enum name="phoneSymbols" value="8"  />
             <enum name="number" value="9"  />
+            <enum name="emojiRecents" value="10" />
+            <enum name="emojiCategory1" value="11" />
+            <enum name="emojiCategory2" value="12" />
+            <enum name="emojiCategory3" value="13" />
+            <enum name="emojiCategory4" value="14" />
+            <enum name="emojiCategory5" value="15" />
+            <enum name="emojiCategory6" value="16" />
         </attr>
         <attr name="elementKeyboard" format="reference"/>
         <!-- Enable proximity characters correction. Disabled by default. -->
@@ -439,7 +470,6 @@
     </declare-styleable>
 
     <declare-styleable name="SeekBarDialogPreference">
-        <attr name="valueFormatText" format="reference" />
         <attr name="maxValue" format="integer" />
         <attr name="minValue" format="integer" />
         <attr name="stepValue" format="integer" />

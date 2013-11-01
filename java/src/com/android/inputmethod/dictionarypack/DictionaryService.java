@@ -22,14 +22,15 @@ import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
 import android.os.IBinder;
-import android.text.format.DateUtils;
-import android.util.Log;
 import android.widget.Toast;
 
 import com.android.inputmethod.latin.R;
 
 import java.util.Locale;
 import java.util.Random;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Service that handles background tasks for the dictionary provider.
@@ -49,17 +50,10 @@ import java.util.Random;
  *     to access, and mark the current state as such.
  */
 public final class DictionaryService extends Service {
-    private static final String TAG = DictionaryService.class.getName();
-
     /**
      * The package name, to use in the intent actions.
      */
-    private static final String PACKAGE_NAME = "com.android.android.inputmethod.latin";
-
-    /**
-     * The action of the intent to tell the dictionary provider to update now.
-     */
-    private static final String UPDATE_NOW_INTENT_ACTION = PACKAGE_NAME + ".UPDATE_NOW";
+    private static final String PACKAGE_NAME = "com.android.inputmethod.latin";
 
     /**
      * The action of the date changing, used to schedule a periodic freshness check
@@ -82,36 +76,42 @@ public final class DictionaryService extends Service {
      * How often, in milliseconds, we want to update the metadata. This is a
      * floor value; actually, it may happen several hours later, or even more.
      */
-    private static final long UPDATE_FREQUENCY = 4 * DateUtils.DAY_IN_MILLIS;
+    private static final long UPDATE_FREQUENCY = TimeUnit.DAYS.toMillis(4);
 
     /**
      * We are waked around midnight, local time. We want to wake between midnight and 6 am,
      * roughly. So use a random time between 0 and this delay.
      */
-    private static final int MAX_ALARM_DELAY = 6 * ((int)AlarmManager.INTERVAL_HOUR);
+    private static final int MAX_ALARM_DELAY = (int)TimeUnit.HOURS.toMillis(6);
 
     /**
      * How long we consider a "very long time". If no update took place in this time,
      * the content provider will trigger an update in the background.
      */
-    private static final long VERY_LONG_TIME = 14 * DateUtils.DAY_IN_MILLIS;
+    private static final long VERY_LONG_TIME = TimeUnit.DAYS.toMillis(14);
 
     /**
-     * The last seen start Id. This must be stored because we must only call stopSelfResult() with
-     * the last seen Id, or the service won't stop.
+     * An executor that serializes tasks given to it.
      */
-    private int mLastSeenStartId;
-
-    /**
-     * The command count. We need this because we need to not call stopSelfResult() while we still
-     * have commands running.
-     */
-    private int mCommandCount;
+    private ThreadPoolExecutor mExecutor;
+    private static final int WORKER_THREAD_TIMEOUT_SECONDS = 15;
 
     @Override
     public void onCreate() {
-        mLastSeenStartId = 0;
-        mCommandCount = 0;
+        // By default, a thread pool executor does not timeout its core threads, so it will
+        // never kill them when there isn't any work to do any more. That would mean the service
+        // can never die! By creating it this way and calling allowCoreThreadTimeOut, we allow
+        // the single thread to time out after WORKER_THREAD_TIMEOUT_SECONDS = 15 seconds, allowing
+        // the process to be reclaimed by the system any time after that if it's not doing
+        // anything else.
+        // Executors#newSingleThreadExecutor creates a ThreadPoolExecutor but it returns the
+        // superclass ExecutorService which does not have the #allowCoreThreadTimeOut method,
+        // so we can't use that.
+        mExecutor = new ThreadPoolExecutor(1 /* corePoolSize */, 1 /* maximumPoolSize */,
+                WORKER_THREAD_TIMEOUT_SECONDS /* keepAliveTime */,
+                TimeUnit.SECONDS /* unit for keepAliveTime */,
+                new LinkedBlockingQueue<Runnable>() /* workQueue */);
+        mExecutor.allowCoreThreadTimeOut(true);
     }
 
     @Override
@@ -136,33 +136,35 @@ public final class DictionaryService extends Service {
      * - Handle a finished download.
      *     This executes the actions that must be taken after a file (metadata or dictionary data
      *     has been downloaded (or failed to download).
+     * The commands that can be spun an another thread will be executed serially, in order, on
+     * a worker thread that is created on demand and terminates after a short while if there isn't
+     * any work left to do.
      */
     @Override
     public synchronized int onStartCommand(final Intent intent, final int flags,
             final int startId) {
         final DictionaryService self = this;
-        mLastSeenStartId = startId;
-        mCommandCount += 1;
         if (SHOW_DOWNLOAD_TOAST_INTENT_ACTION.equals(intent.getAction())) {
             // This is a UI action, it can't be run in another thread
             showStartDownloadingToast(this, LocaleUtils.constructLocaleFromString(
                     intent.getStringExtra(LOCALE_INTENT_ARGUMENT)));
         } else {
-            // If it's a command that does not require UI, create a thread to do the work
-            // and return right away. DATE_CHANGED or UPDATE_NOW are examples of such commands.
-            new Thread("updateOrFinishDownload") {
+            // If it's a command that does not require UI, arrange for the work to be done on a
+            // separate thread, so that we can return right away. The executor will spawn a thread
+            // if necessary, or reuse a thread that has become idle as appropriate.
+            // DATE_CHANGED or UPDATE_NOW are examples of commands that can be done on another
+            // thread.
+            mExecutor.submit(new Runnable() {
                 @Override
                 public void run() {
                     dispatchBroadcast(self, intent);
-                    synchronized(self) {
-                        if (--mCommandCount <= 0) {
-                            if (!stopSelfResult(mLastSeenStartId)) {
-                                Log.e(TAG, "Can't stop ourselves");
-                            }
-                        }
-                    }
+                    // Since calls to onStartCommand are serialized, the submissions to the executor
+                    // are serialized. That means we are guaranteed to call the stopSelfResult()
+                    // in the same order that we got them, so we don't need to take care of the
+                    // order.
+                    stopSelfResult(startId);
                 }
-            }.start();
+            });
         }
         return Service.START_REDELIVER_INTENT;
     }
@@ -173,9 +175,9 @@ public final class DictionaryService extends Service {
             // at midnight local time, but it may happen if the user changes the date
             // by hand or something similar happens.
             checkTimeAndMaybeSetupUpdateAlarm(context);
-        } else if (UPDATE_NOW_INTENT_ACTION.equals(intent.getAction())) {
+        } else if (DictionaryPackConstants.UPDATE_NOW_INTENT_ACTION.equals(intent.getAction())) {
             // Intent to trigger an update now.
-            UpdateHandler.update(context, false);
+            UpdateHandler.tryUpdate(context, false);
         } else {
             UpdateHandler.downloadFinished(context, intent);
         }
@@ -196,7 +198,7 @@ public final class DictionaryService extends Service {
         // It doesn't matter too much if this is very inexact.
         final long now = System.currentTimeMillis();
         final long alarmTime = now + new Random().nextInt(MAX_ALARM_DELAY);
-        final Intent updateIntent = new Intent(DictionaryService.UPDATE_NOW_INTENT_ACTION);
+        final Intent updateIntent = new Intent(DictionaryPackConstants.UPDATE_NOW_INTENT_ACTION);
         final PendingIntent pendingIntent = PendingIntent.getBroadcast(context, 0,
                 updateIntent, PendingIntent.FLAG_CANCEL_CURRENT);
 
@@ -226,7 +228,7 @@ public final class DictionaryService extends Service {
      */
     public static void updateNowIfNotUpdatedInAVeryLongTime(final Context context) {
         if (!isLastUpdateAtLeastThisOld(context, VERY_LONG_TIME)) return;
-        UpdateHandler.update(context, false);
+        UpdateHandler.tryUpdate(context, false);
     }
 
     /**

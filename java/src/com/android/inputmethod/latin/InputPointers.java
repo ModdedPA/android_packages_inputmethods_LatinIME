@@ -17,6 +17,7 @@
 package com.android.inputmethod.latin;
 
 import com.android.inputmethod.annotations.UsedForTesting;
+import com.android.inputmethod.latin.utils.ResizableIntArray;
 
 import android.util.Log;
 
@@ -102,6 +103,17 @@ public final class InputPointers {
         mYCoordinates.append(yCoordinates, startPos, length);
         mPointerIds.fill(pointerId, mPointerIds.getLength(), length);
         mTimes.append(times, startPos, length);
+    }
+
+    /**
+     * Shift to the left by elementCount, discarding elementCount pointers at the start.
+     * @param elementCount how many elements to shift.
+     */
+    public void shift(final int elementCount) {
+        mXCoordinates.shift(elementCount);
+        mYCoordinates.shift(elementCount);
+        mPointerIds.shift(elementCount);
+        mTimes.shift(elementCount);
     }
 
     public void reset() {

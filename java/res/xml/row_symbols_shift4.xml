@@ -17,31 +17,14 @@
 ** limitations under the License.
 */
 -->
+<merge xmlns:latin="http://schemas.android.com/apk/res/com.android.inputmethod.latin" >
 
-<merge
-    xmlns:latin="http://schemas.android.com/apk/res/com.android.inputmethod.latin"
->
-    <Row
-        latin:keyWidth="10%p"
-    >
-        <Key
-            latin:keyStyle="toAlphaKeyStyle"
-            latin:keyWidth="15%p" />
-        <!-- U+201A: "‚" SINGLE LOW-9 QUOTATION MARK
-             U+201E: "„" DOUBLE LOW-9 QUOTATION MARK -->
-        <Key
-            latin:keyLabel="&#x201E;"
-            latin:moreKeys="&#x201A;"
-            latin:backgroundType="functional" />
-        <include
-            latin:keyXPos="25%p"
-            latin:keyboardLayout="@xml/key_space" />
-        <!-- U+2026: "…" HORIZONTAL ELLIPSIS -->
-        <Key
-            latin:keyLabel="&#x2026;"
-            latin:backgroundType="functional" />
-        <Key
-            latin:keyStyle="enterKeyStyle"
-            latin:keyWidth="fillRight" />
-    </Row>
+    <include latin:keyboardLayout="@xml/keys_less_greater" />
+    <include
+        latin:keyboardLayout="@xml/key_space_symbols" />
+    <include latin:keyboardLayout="@xml/keys_comma_period" />
+
+    <include
+        latin:keyboardLayout="@xml/key_f2" />
+
 </merge>

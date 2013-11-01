@@ -21,6 +21,8 @@ import android.util.Log;
 import com.android.inputmethod.latin.Constants;
 import com.android.inputmethod.latin.define.ProductionFlag;
 
+import java.util.concurrent.TimeUnit;
+
 public class Statistics {
     private static final String TAG = Statistics.class.getSimpleName();
     private static final boolean DEBUG = false
@@ -61,6 +63,16 @@ public class Statistics {
     boolean mIsEmptyUponStarting;
     boolean mIsEmptinessStateKnown;
 
+    // Counts of how often an n-gram is collected or not, and the reasons for the decision.
+    // Keep consistent with publishability result code list in MainLogBuffer
+    int mPublishableCount;
+    int mUnpublishableStoppingCount;
+    int mUnpublishableIncorrectWordCount;
+    int mUnpublishableSampledTooRecently;
+    int mUnpublishableDictionaryUnavailable;
+    int mUnpublishableMayContainDigit;
+    int mUnpublishableNotInDictionary;
+
     // Timers to count average time to enter a key, first press a delete key,
     // between delete keys, and then to return typing after a delete key.
     final AverageTimeCounter mKeyCounter = new AverageTimeCounter();
@@ -92,8 +104,8 @@ public class Statistics {
 
     // To account for the interruptions when the user's attention is directed elsewhere, times
     // longer than MIN_TYPING_INTERMISSION are not counted when estimating this statistic.
-    public static final int MIN_TYPING_INTERMISSION = 2 * 1000;  // in milliseconds
-    public static final int MIN_DELETION_INTERMISSION = 10 * 1000;  // in milliseconds
+    public static final long MIN_TYPING_INTERMISSION = TimeUnit.SECONDS.toMillis(2);
+    public static final long MIN_DELETION_INTERMISSION = TimeUnit.SECONDS.toMillis(10);
 
     // The last time that a tap was performed
     private long mLastTapTime;
@@ -133,6 +145,13 @@ public class Statistics {
         mAfterDeleteKeyCounter.reset();
         mGesturesCharsCount = 0;
         mGesturesDeletedCount = 0;
+        mPublishableCount = 0;
+        mUnpublishableStoppingCount = 0;
+        mUnpublishableIncorrectWordCount = 0;
+        mUnpublishableSampledTooRecently = 0;
+        mUnpublishableDictionaryUnavailable = 0;
+        mUnpublishableMayContainDigit = 0;
+        mUnpublishableNotInDictionary = 0;
 
         mLastTapTime = 0;
         mIsLastKeyDeleteKey = false;
@@ -229,5 +248,32 @@ public class Statistics {
         }
         mIsLastKeyDeleteKey = isDeletion;
         mLastTapTime = time;
+    }
+
+    public void recordPublishabilityResultCode(final int publishabilityResultCode) {
+        // Keep consistent with publishability result code list in MainLogBuffer
+        switch (publishabilityResultCode) {
+        case MainLogBuffer.PUBLISHABILITY_PUBLISHABLE:
+            mPublishableCount++;
+            break;
+        case MainLogBuffer.PUBLISHABILITY_UNPUBLISHABLE_STOPPING:
+            mUnpublishableStoppingCount++;
+            break;
+        case MainLogBuffer.PUBLISHABILITY_UNPUBLISHABLE_INCORRECT_WORD_COUNT:
+            mUnpublishableIncorrectWordCount++;
+            break;
+        case MainLogBuffer.PUBLISHABILITY_UNPUBLISHABLE_SAMPLED_TOO_RECENTLY:
+            mUnpublishableSampledTooRecently++;
+            break;
+        case MainLogBuffer.PUBLISHABILITY_UNPUBLISHABLE_DICTIONARY_UNAVAILABLE:
+            mUnpublishableDictionaryUnavailable++;
+            break;
+        case MainLogBuffer.PUBLISHABILITY_UNPUBLISHABLE_MAY_CONTAIN_DIGIT:
+            mUnpublishableMayContainDigit++;
+            break;
+        case MainLogBuffer.PUBLISHABILITY_UNPUBLISHABLE_NOT_IN_DICTIONARY:
+            mUnpublishableNotInDictionary++;
+            break;
+        }
     }
 }

@@ -17,6 +17,7 @@
 package com.android.inputmethod.latin;
 
 import android.test.suitebuilder.annotation.LargeTest;
+import android.view.inputmethod.BaseInputConnection;
 
 @LargeTest
 public class InputLogicTests extends InputTestsBase {
@@ -133,6 +134,13 @@ public class InputLogicTests extends InputTestsBase {
         assertEquals("simple auto-correct", EXPECTED_RESULT, mEditText.getText().toString());
     }
 
+    public void testAutoCorrectWithQuote() {
+        final String STRING_TO_TYPE = "didn' ";
+        final String EXPECTED_RESULT = "didn't ";
+        type(STRING_TO_TYPE);
+        assertEquals("auto-correct with quote", EXPECTED_RESULT, mEditText.getText().toString());
+    }
+
     public void testAutoCorrectWithPeriod() {
         final String STRING_TO_TYPE = "tgis.";
         final String EXPECTED_RESULT = "this.";
@@ -171,15 +179,22 @@ public class InputLogicTests extends InputTestsBase {
     }
 
     public void testDoubleSpace() {
-        final String STRING_TO_TYPE = "this  ";
-        final String EXPECTED_RESULT = "this. ";
-        type(STRING_TO_TYPE);
-        assertEquals("double space make a period", EXPECTED_RESULT, mEditText.getText().toString());
+        // U+1F607 is an emoji
+        final String[] STRINGS_TO_TYPE =
+                new String[] { "this   ", "a+  ", "\u1F607  ", "..  ", ")  ", "(  ", "%  " };
+        final String[] EXPECTED_RESULTS =
+                new String[] { "this.  ", "a+. ", "\u1F607. ", "..  ", "). ", "(  ", "%  " };
+        for (int i = 0; i < STRINGS_TO_TYPE.length; ++i) {
+            mEditText.setText("");
+            type(STRINGS_TO_TYPE[i]);
+            assertEquals("double space processing", EXPECTED_RESULTS[i],
+                    mEditText.getText().toString());
+        }
     }
 
     public void testCancelDoubleSpace() {
         final String STRING_TO_TYPE = "this  ";
-        final String EXPECTED_RESULT = "this  ";
+        final String EXPECTED_RESULT = "this ";
         type(STRING_TO_TYPE);
         type(Constants.CODE_DELETE);
         assertEquals("double space make a period", EXPECTED_RESULT, mEditText.getText().toString());
@@ -289,6 +304,48 @@ public class InputLogicTests extends InputTestsBase {
             type(Constants.CODE_DELETE);
         }
         assertEquals("delete whole composing word", "", mEditText.getText().toString());
+    }
+
+    public void testResumeSuggestionOnBackspace() {
+        final String WORD_TO_TYPE = "and this ";
+        type(WORD_TO_TYPE);
+        assertEquals("resume suggestion on backspace", -1,
+                BaseInputConnection.getComposingSpanStart(mEditText.getText()));
+        assertEquals("resume suggestion on backspace", -1,
+                BaseInputConnection.getComposingSpanEnd(mEditText.getText()));
+        type(Constants.CODE_DELETE);
+        assertEquals("resume suggestion on backspace", 4,
+                BaseInputConnection.getComposingSpanStart(mEditText.getText()));
+        assertEquals("resume suggestion on backspace", 8,
+                BaseInputConnection.getComposingSpanEnd(mEditText.getText()));
+    }
+
+    private void helperTestComposing(final String wordToType, final boolean shouldBeComposing) {
+        mEditText.setText("");
+        type(wordToType);
+        assertEquals("start composing inside text", shouldBeComposing ? 0 : -1,
+                BaseInputConnection.getComposingSpanStart(mEditText.getText()));
+        assertEquals("start composing inside text", shouldBeComposing ? wordToType.length() : -1,
+                BaseInputConnection.getComposingSpanEnd(mEditText.getText()));
+    }
+
+    public void testStartComposing() {
+        // Should start composing on a letter
+        helperTestComposing("a", true);
+        type("  "); // To reset the composing state
+        // Should not start composing on quote
+        helperTestComposing("'", false);
+        type("  ");
+        helperTestComposing("'-", false);
+        type("  ");
+        // Should not start composing on dash
+        helperTestComposing("-", false);
+        type("  ");
+        helperTestComposing("-'", false);
+        type("  ");
+        helperTestComposing("a-", true);
+        type("  ");
+        helperTestComposing("a'", true);
     }
     // TODO: Add some tests for non-BMP characters
 }

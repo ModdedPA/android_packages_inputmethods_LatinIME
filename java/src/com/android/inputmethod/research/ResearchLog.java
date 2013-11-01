@@ -27,7 +27,6 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.OutputStream;
 import java.io.OutputStreamWriter;
 import java.util.concurrent.Callable;
 import java.util.concurrent.Executors;
@@ -56,7 +55,7 @@ public class ResearchLog {
     private static final String TAG = ResearchLog.class.getSimpleName();
     private static final boolean DEBUG = false
             && ProductionFlag.USES_DEVELOPMENT_ONLY_DIAGNOSTICS_DEBUG;
-    private static final long FLUSH_DELAY_IN_MS = 1000 * 5;
+    private static final long FLUSH_DELAY_IN_MS = TimeUnit.SECONDS.toMillis(5);
 
     /* package */ final ScheduledExecutorService mExecutor;
     /* package */ final File mFile;
@@ -78,6 +77,17 @@ public class ResearchLog {
         mExecutor = Executors.newSingleThreadScheduledExecutor();
         mFile = outputFile;
         mContext = context;
+    }
+
+    /**
+     * Returns true if this is a FeedbackLog.
+     *
+     * FeedbackLogs record only the data associated with a Feedback dialog. Instead of normal
+     * logging, they contain a LogStatement with the complete feedback string and optionally a
+     * recording of the user's supplied demo of the problem.
+     */
+    public boolean isFeedbackLog() {
+        return false;
     }
 
     /**

@@ -17,7 +17,6 @@
 package com.android.inputmethod.keyboard;
 
 import android.content.Context;
-import android.content.res.Resources;
 import android.graphics.Paint;
 import android.graphics.drawable.Drawable;
 
@@ -28,7 +27,8 @@ import com.android.inputmethod.keyboard.internal.KeyboardIconsSet;
 import com.android.inputmethod.keyboard.internal.KeyboardParams;
 import com.android.inputmethod.keyboard.internal.MoreKeySpec;
 import com.android.inputmethod.latin.R;
-import com.android.inputmethod.latin.StringUtils;
+import com.android.inputmethod.latin.utils.StringUtils;
+import com.android.inputmethod.latin.utils.TypefaceUtils;
 
 public final class MoreKeysKeyboard extends Keyboard {
     private final int mDefaultKeyCoordX;
@@ -75,10 +75,8 @@ public final class MoreKeysKeyboard extends Keyboard {
                 final boolean isFixedColumnOrder, final int dividerWidth) {
             mIsFixedOrder = isFixedColumnOrder;
             if (parentKeyboardWidth / keyWidth < Math.min(numKeys, maxColumns)) {
-                throw new IllegalArgumentException(
-                        "Keyboard is too small to hold more keys keyboard: "
-                                + parentKeyboardWidth + " " + keyWidth + " "
-                                + numKeys + " " + maxColumns);
+                throw new IllegalArgumentException("Keyboard is too small to hold more keys: "
+                        + parentKeyboardWidth + " " + keyWidth + " " + numKeys + " " + maxColumns);
             }
             mDefaultKeyWidth = keyWidth;
             mDefaultRowHeight = rowHeight;
@@ -278,9 +276,16 @@ public final class MoreKeysKeyboard extends Keyboard {
             mParams.mVerticalGap = parentKeyboard.mVerticalGap / 2;
             mParentKey = parentKey;
 
+            final MoreKeySpec[] moreKeys = parentKey.getMoreKeys();
             final int width, height;
+            // {@link KeyPreviewDrawParams#mPreviewVisibleWidth} should have been set at
+            // {@link MainKeyboardView#showKeyPreview(PointerTracker}, though there may be
+            // some chances that the value is zero. <code>width == 0</code> will cause
+            // zero-division error at
+            // {@link MoreKeysKeyboardParams#setParameters(int,int,int,int,int,int,boolean,int)}.
             final boolean singleMoreKeyWithPreview = parentKeyboardView.isKeyPreviewPopupEnabled()
-                    && !parentKey.noKeyPreview() && parentKey.mMoreKeys.length == 1;
+                    && !parentKey.noKeyPreview() && moreKeys.length == 1
+                    && keyPreviewDrawParams.mPreviewVisibleWidth > 0;
             if (singleMoreKeyWithPreview) {
                 // Use pre-computed width and height if this more keys keyboard has only one key to
                 // mitigate visual flicker between key preview and more keys keyboard.
@@ -291,22 +296,14 @@ public final class MoreKeysKeyboard extends Keyboard {
                 // adjusted with their bottom paddings deducted.
                 width = keyPreviewDrawParams.mPreviewVisibleWidth;
                 height = keyPreviewDrawParams.mPreviewVisibleHeight + mParams.mVerticalGap;
-                // TODO: Remove this check.
-                if (width == 0) {
-                    throw new IllegalArgumentException(
-                            "Zero width key detected: " + parentKey + " in " + parentKeyboard.mId);
-                }
             } else {
-                width = getMaxKeyWidth(parentKeyboardView, parentKey, mParams.mDefaultKeyWidth,
-                        context.getResources());
+                final float padding = context.getResources().getDimension(
+                        R.dimen.more_keys_keyboard_key_horizontal_padding)
+                        + (parentKey.hasLabelsInMoreKeys()
+                                ? mParams.mDefaultKeyWidth * LABEL_PADDING_RATIO : 0.0f);
+                width = getMaxKeyWidth(parentKey, mParams.mDefaultKeyWidth, padding,
+                        parentKeyboardView.newLabelPaint(parentKey));
                 height = parentKeyboard.mMostCommonKeyHeight;
-                // TODO: Remove this check.
-                if (width == 0) {
-                    throw new IllegalArgumentException(
-                            "Zero width calculated: " + parentKey
-                            + " moreKeys=" + java.util.Arrays.toString(parentKey.mMoreKeys)
-                            + " in " + parentKeyboard.mId);
-                }
             }
             final int dividerWidth;
             if (parentKey.needsDividersInMoreKeys()) {
@@ -316,20 +313,16 @@ public final class MoreKeysKeyboard extends Keyboard {
                 mDivider = null;
                 dividerWidth = 0;
             }
-            mParams.setParameters(parentKey.mMoreKeys.length, parentKey.getMoreKeysColumn(),
-                    width, height, parentKey.mX + parentKey.mWidth / 2,
-                    parentKeyboardView.getMeasuredWidth(), parentKey.isFixedColumnOrderMoreKeys(),
+            mParams.setParameters(moreKeys.length, parentKey.getMoreKeysColumn(),
+                    width, height, parentKey.getX() + parentKey.getWidth() / 2,
+                    parentKeyboard.mId.mWidth, parentKey.isFixedColumnOrderMoreKeys(),
                     dividerWidth);
         }
 
-        private static int getMaxKeyWidth(final KeyboardView view, final Key parentKey,
-                final int minKeyWidth, final Resources res) {
-            final float padding =
-                    res.getDimension(R.dimen.more_keys_keyboard_key_horizontal_padding)
-                    + (parentKey.hasLabelsInMoreKeys() ? minKeyWidth * LABEL_PADDING_RATIO : 0.0f);
-            final Paint paint = view.newLabelPaint(parentKey);
+        private static int getMaxKeyWidth(final Key parentKey, final int minKeyWidth,
+                final float padding, final Paint paint) {
             int maxWidth = minKeyWidth;
-            for (final MoreKeySpec spec : parentKey.mMoreKeys) {
+            for (final MoreKeySpec spec : parentKey.getMoreKeys()) {
                 final String label = spec.mLabel;
                 // If the label is single letter, minKeyWidth is enough to hold the label.
                 if (label != null && StringUtils.codePointCount(label) > 1) {
@@ -344,7 +337,7 @@ public final class MoreKeysKeyboard extends Keyboard {
         public MoreKeysKeyboard build() {
             final MoreKeysKeyboardParams params = mParams;
             final int moreKeyFlags = mParentKey.getMoreKeyLabelFlags();
-            final MoreKeySpec[] moreKeys = mParentKey.mMoreKeys;
+            final MoreKeySpec[] moreKeys = mParentKey.getMoreKeys();
             for (int n = 0; n < moreKeys.length; n++) {
                 final MoreKeySpec moreKeySpec = moreKeys[n];
                 final int row = n / params.mNumColumns;

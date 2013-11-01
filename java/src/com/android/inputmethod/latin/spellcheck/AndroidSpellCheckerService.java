@@ -20,22 +20,26 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.preference.PreferenceManager;
 import android.service.textservice.SpellCheckerService;
+import android.text.InputType;
 import android.util.Log;
+import android.view.inputmethod.EditorInfo;
+import android.view.inputmethod.InputMethodSubtype;
 import android.view.textservice.SuggestionsInfo;
 
 import com.android.inputmethod.keyboard.KeyboardLayoutSet;
 import com.android.inputmethod.latin.BinaryDictionary;
-import com.android.inputmethod.latin.CollectionUtils;
 import com.android.inputmethod.latin.ContactsBinaryDictionary;
 import com.android.inputmethod.latin.Dictionary;
 import com.android.inputmethod.latin.DictionaryCollection;
 import com.android.inputmethod.latin.DictionaryFactory;
-import com.android.inputmethod.latin.LocaleUtils;
 import com.android.inputmethod.latin.R;
-import com.android.inputmethod.latin.StringUtils;
 import com.android.inputmethod.latin.SynchronouslyLoadedContactsBinaryDictionary;
 import com.android.inputmethod.latin.SynchronouslyLoadedUserBinaryDictionary;
 import com.android.inputmethod.latin.UserBinaryDictionary;
+import com.android.inputmethod.latin.utils.AdditionalSubtypeUtils;
+import com.android.inputmethod.latin.utils.CollectionUtils;
+import com.android.inputmethod.latin.utils.LocaleUtils;
+import com.android.inputmethod.latin.utils.StringUtils;
 
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
@@ -57,6 +61,9 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     private static final int POOL_SIZE = 2;
 
     public static final String PREF_USE_CONTACTS_KEY = "pref_spellcheck_use_contacts";
+
+    private static final int SPELLCHECKER_DUMMY_KEYBOARD_WIDTH = 480;
+    private static final int SPELLCHECKER_DUMMY_KEYBOARD_HEIGHT = 368;
 
     private final static String[] EMPTY_STRING_ARRAY = new String[0];
     private Map<String, DictionaryPool> mDictionaryPools = CollectionUtils.newSynchronizedTreeMap();
@@ -197,10 +204,20 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
         return AndroidSpellCheckerSessionFactory.newInstance(this);
     }
 
-    public static SuggestionsInfo getNotInDictEmptySuggestions() {
-        return new SuggestionsInfo(0, EMPTY_STRING_ARRAY);
+    /**
+     * Returns an empty SuggestionsInfo with flags signaling the word is not in the dictionary.
+     * @param reportAsTypo whether this should include the flag LOOKS_LIKE_TYPO, for red underline.
+     * @return the empty SuggestionsInfo with the appropriate flags set.
+     */
+    public static SuggestionsInfo getNotInDictEmptySuggestions(final boolean reportAsTypo) {
+        return new SuggestionsInfo(reportAsTypo ? SuggestionsInfo.RESULT_ATTR_LOOKS_LIKE_TYPO : 0,
+                EMPTY_STRING_ARRAY);
     }
 
+    /**
+     * Returns an empty suggestionInfo with flags signaling the word is in the dictionary.
+     * @return the empty SuggestionsInfo with the appropriate flags set.
+     */
     public static SuggestionsInfo getInDictEmptySuggestions() {
         return new SuggestionsInfo(SuggestionsInfo.RESULT_ATTR_IN_THE_DICTIONARY,
                 EMPTY_STRING_ARRAY);
@@ -401,9 +418,9 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
     public DictAndKeyboard createDictAndKeyboard(final Locale locale) {
         final int script = getScriptFromLocale(locale);
         final String keyboardLayoutName = getKeyboardLayoutNameForScript(script);
-        final KeyboardLayoutSet keyboardLayoutSet =
-                KeyboardLayoutSet.createKeyboardSetForSpellChecker(this, locale.toString(),
-                        keyboardLayoutName);
+        final InputMethodSubtype subtype = AdditionalSubtypeUtils.createAdditionalSubtype(
+                locale.toString(), keyboardLayoutName, null);
+        final KeyboardLayoutSet keyboardLayoutSet = createKeyboardSetForSpellChecker(subtype);
 
         final DictionaryCollection dictionaryCollection =
                 DictionaryFactory.createMainDictionaryFromManager(this, locale,
@@ -430,5 +447,17 @@ public final class AndroidSpellCheckerService extends SpellCheckerService
                     new WeakReference<DictionaryCollection>(dictionaryCollection));
         }
         return new DictAndKeyboard(dictionaryCollection, keyboardLayoutSet);
+    }
+
+    private KeyboardLayoutSet createKeyboardSetForSpellChecker(final InputMethodSubtype subtype) {
+        final EditorInfo editorInfo = new EditorInfo();
+        editorInfo.inputType = InputType.TYPE_CLASS_TEXT;
+        final KeyboardLayoutSet.Builder builder = new KeyboardLayoutSet.Builder(this, editorInfo);
+        builder.setKeyboardGeometry(
+                SPELLCHECKER_DUMMY_KEYBOARD_WIDTH, SPELLCHECKER_DUMMY_KEYBOARD_HEIGHT);
+        builder.setSubtype(subtype);
+        builder.setIsSpellChecker(true /* isSpellChecker */);
+        builder.disableTouchPositionCorrectionData();
+        return builder.build();
     }
 }

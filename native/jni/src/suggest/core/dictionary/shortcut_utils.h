@@ -19,25 +19,24 @@
 
 #include "defines.h"
 #include "suggest/core/dicnode/dic_node_utils.h"
-#include "terminal_attributes.h"
+#include "suggest/core/dictionary/binary_dictionary_shortcut_iterator.h"
 
 namespace latinime {
 
 class ShortcutUtils {
  public:
-    static int outputShortcuts(const TerminalAttributes *const terminalAttributes,
+    static int outputShortcuts(BinaryDictionaryShortcutIterator *const shortcutIt,
             int outputWordIndex, const int finalScore, int *const outputCodePoints,
             int *const frequencies, int *const outputTypes, const bool sameAsTyped) {
-        TerminalAttributes::ShortcutIterator iterator = terminalAttributes->getShortcutIterator();
-        while (iterator.hasNextShortcutTarget() && outputWordIndex < MAX_RESULTS) {
-            int shortcutTarget[MAX_WORD_LENGTH];
-            int shortcutProbability;
-            const int shortcutTargetStringLength = iterator.getNextShortcutTarget(
-                    MAX_WORD_LENGTH, shortcutTarget, &shortcutProbability);
+        int shortcutTarget[MAX_WORD_LENGTH];
+        while (shortcutIt->hasNextShortcutTarget() && outputWordIndex < MAX_RESULTS) {
+            bool isWhilelist;
+            int shortcutTargetStringLength;
+            shortcutIt->nextShortcutTarget(MAX_WORD_LENGTH, shortcutTarget,
+                    &shortcutTargetStringLength, &isWhilelist);
             int shortcutScore;
             int kind;
-            if (shortcutProbability == BinaryFormat::WHITELIST_SHORTCUT_PROBABILITY
-                    && sameAsTyped) {
+            if (isWhilelist && sameAsTyped) {
                 shortcutScore = S_INT_MAX;
                 kind = Dictionary::KIND_WHITELIST;
             } else {
@@ -45,7 +44,7 @@ class ShortcutUtils {
                 shortcutScore = finalScore;
                 // Protection against int underflow
                 shortcutScore = max(S_INT_MIN + 1, shortcutScore) - 1;
-                kind = Dictionary::KIND_CORRECTION;
+                kind = Dictionary::KIND_SHORTCUT;
             }
             outputTypes[outputWordIndex] = kind;
             frequencies[outputWordIndex] = shortcutScore;

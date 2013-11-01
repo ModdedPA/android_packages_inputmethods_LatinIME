@@ -16,7 +16,6 @@
 
 #include "suggest/core/policy/weighting.h"
 
-#include "char_utils.h"
 #include "defines.h"
 #include "suggest/core/dicnode/dic_node.h"
 #include "suggest/core/dicnode/dic_node_profiler.h"
@@ -39,7 +38,7 @@ static inline void profile(const CorrectionType correctionType, DicNode *const n
     case CT_SUBSTITUTION:
         PROF_SUBSTITUTION(node->mProfiler);
         return;
-    case CT_NEW_WORD_SPACE_OMITTION:
+    case CT_NEW_WORD_SPACE_OMISSION:
         PROF_NEW_WORD(node->mProfiler);
         return;
     case CT_MATCH:
@@ -50,6 +49,9 @@ static inline void profile(const CorrectionType correctionType, DicNode *const n
         return;
     case CT_TERMINAL:
         PROF_TERMINAL(node->mProfiler);
+        return;
+    case CT_TERMINAL_INSERTION:
+        PROF_TERMINAL_INSERTION(node->mProfiler);
         return;
     case CT_NEW_WORD_SPACE_SUBSTITUTION:
         PROF_SPACE_SUBSTITUTION(node->mProfiler);
@@ -91,6 +93,11 @@ static inline void profile(const CorrectionType correctionType, DicNode *const n
     }
     dicNode->addCost(spatialCost, languageCost, weighting->needsToNormalizeCompoundDistance(),
             inputSize, errorType);
+    if (CT_NEW_WORD_SPACE_OMISSION == correctionType) {
+        // When we are on a terminal, we save the current distance for evaluating
+        // when to auto-commit partial suggestions.
+        dicNode->saveNormalizedCompoundDistanceAfterFirstWordIfNoneYet();
+    }
 }
 
 /* static */ float Weighting::getSpatialCost(const Weighting *const weighting,
@@ -106,14 +113,16 @@ static inline void profile(const CorrectionType correctionType, DicNode *const n
     case CT_SUBSTITUTION:
         // only used for typing
         return weighting->getSubstitutionCost();
-    case CT_NEW_WORD_SPACE_OMITTION:
-        return weighting->getNewWordCost(traverseSession, dicNode);
+    case CT_NEW_WORD_SPACE_OMISSION:
+        return weighting->getNewWordSpatialCost(traverseSession, dicNode, inputStateG);
     case CT_MATCH:
         return weighting->getMatchedCost(traverseSession, dicNode, inputStateG);
     case CT_COMPLETION:
         return weighting->getCompletionCost(traverseSession, dicNode);
     case CT_TERMINAL:
         return weighting->getTerminalSpatialCost(traverseSession, dicNode);
+    case CT_TERMINAL_INSERTION:
+        return weighting->getTerminalInsertionCost(traverseSession, dicNode);
     case CT_NEW_WORD_SPACE_SUBSTITUTION:
         return weighting->getSpaceSubstitutionCost(traverseSession, dicNode);
     case CT_INSERTION:
@@ -134,8 +143,9 @@ static inline void profile(const CorrectionType correctionType, DicNode *const n
         return 0.0f;
     case CT_SUBSTITUTION:
         return 0.0f;
-    case CT_NEW_WORD_SPACE_OMITTION:
-        return weighting->getNewWordBigramCost(traverseSession, parentDicNode, multiBigramMap);
+    case CT_NEW_WORD_SPACE_OMISSION:
+        return weighting->getNewWordBigramLanguageCost(
+                traverseSession, parentDicNode, multiBigramMap);
     case CT_MATCH:
         return 0.0f;
     case CT_COMPLETION:
@@ -143,11 +153,14 @@ static inline void profile(const CorrectionType correctionType, DicNode *const n
     case CT_TERMINAL: {
         const float languageImprobability =
                 DicNodeUtils::getBigramNodeImprobability(
-                        traverseSession->getOffsetDict(), dicNode, multiBigramMap);
+                        traverseSession->getDictionaryStructurePolicy(), dicNode, multiBigramMap);
         return weighting->getTerminalLanguageCost(traverseSession, dicNode, languageImprobability);
     }
+    case CT_TERMINAL_INSERTION:
+        return 0.0f;
     case CT_NEW_WORD_SPACE_SUBSTITUTION:
-        return weighting->getNewWordBigramCost(traverseSession, parentDicNode, multiBigramMap);
+        return weighting->getNewWordBigramLanguageCost(
+                traverseSession, parentDicNode, multiBigramMap);
     case CT_INSERTION:
         return 0.0f;
     case CT_TRANSPOSITION:
@@ -162,10 +175,10 @@ static inline void profile(const CorrectionType correctionType, DicNode *const n
         case CT_OMISSION:
             return 0;
         case CT_ADDITIONAL_PROXIMITY:
-            return 0;
+            return 0; /* 0 because CT_MATCH will be called */
         case CT_SUBSTITUTION:
-            return 0;
-        case CT_NEW_WORD_SPACE_OMITTION:
+            return 0; /* 0 because CT_MATCH will be called */
+        case CT_NEW_WORD_SPACE_OMISSION:
             return 0;
         case CT_MATCH:
             return 1;
@@ -173,12 +186,14 @@ static inline void profile(const CorrectionType correctionType, DicNode *const n
             return 1;
         case CT_TERMINAL:
             return 0;
+        case CT_TERMINAL_INSERTION:
+            return 1;
         case CT_NEW_WORD_SPACE_SUBSTITUTION:
             return 1;
         case CT_INSERTION:
-            return 2;
+            return 2; /* look ahead + skip the current char */
         case CT_TRANSPOSITION:
-            return 2;
+            return 2; /* look ahead + skip the current char */
         default:
             return 0;
     }

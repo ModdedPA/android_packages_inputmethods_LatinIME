@@ -20,6 +20,9 @@ import android.text.InputType;
 import android.util.Log;
 import android.view.inputmethod.EditorInfo;
 
+import com.android.inputmethod.latin.utils.InputTypeUtils;
+import com.android.inputmethod.latin.utils.StringUtils;
+
 /**
  * Class to hold attributes of the input field.
  */
@@ -98,6 +101,10 @@ public final class InputAttributes {
 
             mApplicationSpecifiedCompletionOn = flagAutoComplete && isFullscreenMode;
         }
+    }
+
+    public boolean isTypeNull() {
+        return InputType.TYPE_NULL == mInputType;
     }
 
     public boolean isSameInputType(final EditorInfo editorInfo) {
@@ -199,6 +206,6 @@ public final class InputAttributes {
         if (editorInfo == null) return false;
         final String findingKey = (packageName != null) ? packageName + "." + key
                 : key;
-        return StringUtils.containsInCsv(findingKey, editorInfo.privateImeOptions);
+        return StringUtils.containsInCommaSplittableText(findingKey, editorInfo.privateImeOptions);
     }
 }

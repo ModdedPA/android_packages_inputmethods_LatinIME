@@ -21,6 +21,8 @@ import com.android.inputmethod.latin.SuggestedWords.SuggestedWordInfo;
 import android.test.AndroidTestCase;
 import android.test.suitebuilder.annotation.SmallTest;
 
+import com.android.inputmethod.latin.utils.CollectionUtils;
+
 import java.util.ArrayList;
 import java.util.Locale;
 
@@ -32,9 +34,14 @@ public class SuggestedWordsTests extends AndroidTestCase {
         final int NUMBER_OF_ADDED_SUGGESTIONS = 5;
         final ArrayList<SuggestedWordInfo> list = CollectionUtils.newArrayList();
         list.add(new SuggestedWordInfo(TYPED_WORD, TYPED_WORD_FREQ,
-                SuggestedWordInfo.KIND_TYPED, ""));
+                SuggestedWordInfo.KIND_TYPED, null /* sourceDict */,
+                SuggestedWordInfo.NOT_AN_INDEX /* indexOfTouchPointOfSecondWord */,
+                SuggestedWordInfo.NOT_A_CONFIDENCE /* autoCommitFirstWordConfidence */));
         for (int i = 0; i < NUMBER_OF_ADDED_SUGGESTIONS; ++i) {
-            list.add(new SuggestedWordInfo("" + i, 1, SuggestedWordInfo.KIND_CORRECTION, ""));
+            list.add(new SuggestedWordInfo("" + i, 1, SuggestedWordInfo.KIND_CORRECTION,
+                    null /* sourceDict */,
+                    SuggestedWordInfo.NOT_AN_INDEX /* indexOfTouchPointOfSecondWord */,
+                    SuggestedWordInfo.NOT_A_CONFIDENCE /* autoCommitFirstWordConfidence */));
         }
 
         final SuggestedWords words = new SuggestedWords(
@@ -56,5 +63,38 @@ public class SuggestedWordsTests extends AndroidTestCase {
         assertEquals(words.size() - 1, wordsWithoutTyped.size());
         assertEquals("0", wordsWithoutTyped.getWord(0));
         assertEquals(SuggestedWordInfo.KIND_CORRECTION, wordsWithoutTyped.getInfo(0).mKind);
+    }
+
+    // Helper for testGetTransformedWordInfo
+    private SuggestedWordInfo createWordInfo(final String s) {
+        // Use 100 as the frequency because the numerical value does not matter as
+        // long as it's > 1 and < INT_MAX.
+        return new SuggestedWordInfo(s, 100,
+                SuggestedWordInfo.KIND_TYPED, null /* sourceDict */,
+                SuggestedWordInfo.NOT_AN_INDEX /* indexOfTouchPointOfSecondWord */,
+                SuggestedWordInfo.NOT_A_CONFIDENCE /* autoCommitFirstWordConfidence */);
+    }
+
+    // Helper for testGetTransformedWordInfo
+    private SuggestedWordInfo transformWordInfo(final String info,
+            final int trailingSingleQuotesCount) {
+        return Suggest.getTransformedSuggestedWordInfo(createWordInfo(info),
+                Locale.ENGLISH, false /* isAllUpperCase */, false /* isFirstCharCapitalized */,
+                trailingSingleQuotesCount);
+    }
+
+    public void testGetTransformedSuggestedWordInfo() {
+        SuggestedWordInfo result = transformWordInfo("word", 0);
+        assertEquals(result.mWord, "word");
+        result = transformWordInfo("word", 1);
+        assertEquals(result.mWord, "word'");
+        result = transformWordInfo("word", 3);
+        assertEquals(result.mWord, "word'''");
+        result = transformWordInfo("didn't", 0);
+        assertEquals(result.mWord, "didn't");
+        result = transformWordInfo("didn't", 1);
+        assertEquals(result.mWord, "didn't");
+        result = transformWordInfo("didn't", 3);
+        assertEquals(result.mWord, "didn't''");
     }
 }

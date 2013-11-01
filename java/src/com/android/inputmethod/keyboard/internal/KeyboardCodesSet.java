@@ -16,8 +16,8 @@
 
 package com.android.inputmethod.keyboard.internal;
 
-import com.android.inputmethod.latin.CollectionUtils;
 import com.android.inputmethod.latin.Constants;
+import com.android.inputmethod.latin.utils.CollectionUtils;
 
 import java.util.HashMap;
 
@@ -43,6 +43,7 @@ public final class KeyboardCodesSet {
         "key_enter",
         "key_space",
         "key_shift",
+        "key_capslock",
         "key_switch_alpha_symbol",
         "key_output_text",
         "key_delete",
@@ -52,7 +53,7 @@ public final class KeyboardCodesSet {
         "key_action_previous",
         "key_shift_enter",
         "key_language_switch",
-        "key_research",
+        "key_emoji",
         "key_unspecified",
         "key_left_parenthesis",
         "key_right_parenthesis",
@@ -79,6 +80,7 @@ public final class KeyboardCodesSet {
         Constants.CODE_ENTER,
         Constants.CODE_SPACE,
         Constants.CODE_SHIFT,
+        Constants.CODE_CAPSLOCK,
         Constants.CODE_SWITCH_ALPHA_SYMBOL,
         Constants.CODE_OUTPUT_TEXT,
         Constants.CODE_DELETE,
@@ -88,7 +90,7 @@ public final class KeyboardCodesSet {
         Constants.CODE_ACTION_PREVIOUS,
         Constants.CODE_SHIFT_ENTER,
         Constants.CODE_LANGUAGE_SWITCH,
-        Constants.CODE_RESEARCH,
+        Constants.CODE_EMOJI,
         Constants.CODE_UNSPECIFIED,
         CODE_LEFT_PARENTHESIS,
         CODE_RIGHT_PARENTHESIS,
@@ -116,6 +118,7 @@ public final class KeyboardCodesSet {
         DEFAULT[12],
         DEFAULT[13],
         DEFAULT[14],
+        DEFAULT[15],
         CODE_RIGHT_PARENTHESIS,
         CODE_LEFT_PARENTHESIS,
         CODE_GREATER_THAN_SIGN,

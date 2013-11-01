@@ -16,10 +16,6 @@
 
 package com.android.inputmethod.latin.userdictionary;
 
-import com.android.inputmethod.compat.UserDictionaryCompatUtils;
-import com.android.inputmethod.latin.LocaleUtils;
-import com.android.inputmethod.latin.R;
-
 import android.app.Activity;
 import android.content.ContentResolver;
 import android.content.Context;
@@ -29,6 +25,10 @@ import android.provider.UserDictionary;
 import android.text.TextUtils;
 import android.view.View;
 import android.widget.EditText;
+
+import com.android.inputmethod.compat.UserDictionaryCompatUtils;
+import com.android.inputmethod.latin.R;
+import com.android.inputmethod.latin.utils.LocaleUtils;
 
 import java.util.ArrayList;
 import java.util.Locale;
@@ -65,6 +65,8 @@ public class UserDictionaryAddWordContents {
     private String mLocale;
     private final String mOldWord;
     private final String mOldShortcut;
+    private String mSavedWord;
+    private String mSavedShortcut;
 
     /* package */ UserDictionaryAddWordContents(final View view, final Bundle args) {
         mWordEditText = (EditText)view.findViewById(R.id.user_dictionary_add_word_text);
@@ -76,7 +78,9 @@ public class UserDictionaryAddWordContents {
         final String word = args.getString(EXTRA_WORD);
         if (null != word) {
             mWordEditText.setText(word);
-            mWordEditText.setSelection(word.length());
+            // Use getText in case the edit text modified the text we set. This happens when
+            // it's too long to be edited.
+            mWordEditText.setSelection(mWordEditText.getText().length());
         }
         final String shortcut;
         if (UserDictionarySettings.IS_SHORTCUT_API_SUPPORTED) {
@@ -92,6 +96,16 @@ public class UserDictionaryAddWordContents {
         mMode = args.getInt(EXTRA_MODE); // default return value for #getInt() is 0 = MODE_EDIT
         mOldWord = args.getString(EXTRA_WORD);
         updateLocale(args.getString(EXTRA_LOCALE));
+    }
+
+    /* package */ UserDictionaryAddWordContents(final View view,
+            final UserDictionaryAddWordContents oldInstanceToBeEdited) {
+        mWordEditText = (EditText)view.findViewById(R.id.user_dictionary_add_word_text);
+        mShortcutEditText = (EditText)view.findViewById(R.id.user_dictionary_add_shortcut);
+        mMode = MODE_EDIT;
+        mOldWord = oldInstanceToBeEdited.mSavedWord;
+        mOldShortcut = oldInstanceToBeEdited.mSavedShortcut;
+        updateLocale(mLocale);
     }
 
     // locale may be null, this means default locale
@@ -147,6 +161,8 @@ public class UserDictionaryAddWordContents {
             // If the word is somehow empty, don't insert it.
             return CODE_CANCEL;
         }
+        mSavedWord = newWord;
+        mSavedShortcut = newShortcut;
         // If there is no shortcut, and the word already exists in the database, then we
         // should not insert, because either A. the word exists with no shortcut, in which
         // case the exact same thing we want to insert is already there, or B. the word
@@ -257,5 +273,9 @@ public class UserDictionaryAddWordContents {
         }
         localesList.add(new LocaleRenderer(activity, null)); // meaning: select another locale
         return localesList;
+    }
+
+    public String getCurrentUserDictionaryLocale() {
+        return mLocale;
     }
 }

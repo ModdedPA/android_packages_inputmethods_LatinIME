@@ -61,7 +61,7 @@ public final class WordListPreference extends Preference {
     public final Locale mLocale;
     public final String mDescription;
     // The status
-    public int mStatus;
+    private int mStatus;
     // The size of the dictionary file
     private final int mFilesize;
 
@@ -92,10 +92,23 @@ public final class WordListPreference extends Preference {
         setKey(wordlistId);
     }
 
-    private void setStatus(final int status) {
+    public void setStatus(final int status) {
         if (status == mStatus) return;
         mStatus = status;
         setSummary(getSummary(status));
+    }
+
+    @Override
+    public View onCreateView(final ViewGroup parent) {
+        final View orphanedView = mInterfaceState.findFirstOrphanedView();
+        if (null != orphanedView) return orphanedView; // Will be sent to onBindView
+        final View newView = super.onCreateView(parent);
+        return mInterfaceState.addToCacheAndReturnView(newView);
+    }
+
+    public boolean hasPriorityOver(final int otherPrefStatus) {
+        // Both of these should be one of MetadataDbHelper.STATUS_*
+        return mStatus > otherPrefStatus;
     }
 
     private String getSummary(final int status) {
@@ -209,6 +222,9 @@ public final class WordListPreference extends Preference {
 
         final ButtonSwitcher buttonSwitcher =
                 (ButtonSwitcher)view.findViewById(R.id.wordlist_button_switcher);
+        // We need to clear the state of the button switcher, because we reuse views; if we didn't
+        // reset it would animate from whatever its old state was.
+        buttonSwitcher.reset(mInterfaceState);
         if (mInterfaceState.isOpen(mWordlistId)) {
             // The button is open.
             final int previousStatus = mInterfaceState.getStatus(mWordlistId);

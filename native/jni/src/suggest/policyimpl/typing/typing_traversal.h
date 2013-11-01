@@ -19,14 +19,15 @@
 
 #include <stdint.h>
 
-#include "char_utils.h"
 #include "defines.h"
-#include "proximity_info_state.h"
 #include "suggest/core/dicnode/dic_node.h"
 #include "suggest/core/dicnode/dic_node_vector.h"
+#include "suggest/core/layout/proximity_info_state.h"
+#include "suggest/core/layout/proximity_info_utils.h"
 #include "suggest/core/policy/traversal.h"
 #include "suggest/core/session/dic_traverse_session.h"
 #include "suggest/policyimpl/typing/scoring_params.h"
+#include "utils/char_utils.h"
 
 namespace latinime {
 class TypingTraversal : public Traversal {
@@ -64,9 +65,9 @@ class TypingTraversal : public Traversal {
         }
         const int point0Index = dicNode->getInputIndex(0);
         const int currentBaseLowerCodePoint =
-                toBaseLowerCase(childDicNode->getNodeCodePoint());
+                CharUtils::toBaseLowerCase(childDicNode->getNodeCodePoint());
         const int typedBaseLowerCodePoint =
-                toBaseLowerCase(traverseSession->getProximityInfoState(0)
+                CharUtils::toBaseLowerCase(traverseSession->getProximityInfoState(0)
                         ->getPrimaryCodePointAt(point0Index));
         return (currentBaseLowerCodePoint != typedBaseLowerCodePoint);
     }
@@ -100,7 +101,7 @@ class TypingTraversal : public Traversal {
         }
         const int16_t pointIndex = dicNode->getInputIndex(0);
         return pointIndex <= inputSize && !dicNode->isTotalInputSizeExceedingLimit()
-                && !dicNode->shouldBeFilterdBySafetyNetForBigram();
+                && !dicNode->shouldBeFilteredBySafetyNetForBigram();
     }
 
     AK_FORCE_INLINE bool shouldDepthLevelCache(
@@ -136,7 +137,7 @@ class TypingTraversal : public Traversal {
         return ScoringParams::MAX_SPATIAL_DISTANCE;
     }
 
-    AK_FORCE_INLINE bool allowPartialCommit() const {
+    AK_FORCE_INLINE bool autoCorrectsToMultiWordSuggestionIfTop() const {
         return true;
     }
 
@@ -147,11 +148,12 @@ class TypingTraversal : public Traversal {
     AK_FORCE_INLINE bool sameAsTyped(
             const DicTraverseSession *const traverseSession, const DicNode *const dicNode) const {
         return traverseSession->getProximityInfoState(0)->sameAsTyped(
-                dicNode->getOutputWordBuf(), dicNode->getDepth());
+                dicNode->getOutputWordBuf(), dicNode->getNodeCodePointCount());
     }
 
-    AK_FORCE_INLINE int getMaxCacheSize() const {
-        return ScoringParams::MAX_CACHE_DIC_NODE_SIZE;
+    AK_FORCE_INLINE int getMaxCacheSize(const int inputSize) const {
+        return (inputSize <= 1) ? ScoringParams::MAX_CACHE_DIC_NODE_SIZE_FOR_SINGLE_POINT
+                : ScoringParams::MAX_CACHE_DIC_NODE_SIZE;
     }
 
     AK_FORCE_INLINE bool isPossibleOmissionChildNode(
@@ -159,7 +161,7 @@ class TypingTraversal : public Traversal {
             const DicNode *const dicNode) const {
         const ProximityType proximityType =
                 getProximityType(traverseSession, parentDicNode, dicNode);
-        if (!DicNodeUtils::isProximityChar(proximityType)) {
+        if (!ProximityInfoUtils::isMatchOrProximityChar(proximityType)) {
             return false;
         }
         return true;
@@ -171,8 +173,8 @@ class TypingTraversal : public Traversal {
             return false;
         }
         const int c = dicNode->getOutputWordBuf()[0];
-        const bool shortCappedWord = dicNode->getDepth()
-                < ScoringParams::THRESHOLD_SHORT_WORD_LENGTH && isAsciiUpper(c);
+        const bool shortCappedWord = dicNode->getNodeCodePointCount()
+                < ScoringParams::THRESHOLD_SHORT_WORD_LENGTH && CharUtils::isAsciiUpper(c);
         return !shortCappedWord
                 || probability >= ScoringParams::THRESHOLD_NEXT_WORD_PROBABILITY_FOR_CAPPED;
     }

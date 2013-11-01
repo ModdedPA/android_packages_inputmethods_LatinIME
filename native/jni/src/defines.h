@@ -35,6 +35,56 @@
 // Must be equal to ProximityInfo.MAX_PROXIMITY_CHARS_SIZE in Java
 #define MAX_PROXIMITY_CHARS_SIZE 16
 #define ADDITIONAL_PROXIMITY_CHAR_DELIMITER_CODE 2
+#define NELEMS(x) (sizeof(x) / sizeof((x)[0]))
+
+AK_FORCE_INLINE static int intArrayToCharArray(const int *const source, const int sourceSize,
+        char *dest, const int destSize) {
+    // We want to always terminate with a 0 char, so stop one short of the length to make
+    // sure there is room.
+    const int destLimit = destSize - 1;
+    int si = 0;
+    int di = 0;
+    while (si < sourceSize && di < destLimit && 0 != source[si]) {
+        const int codePoint = source[si++];
+        if (codePoint < 0x7F) { // One byte
+            dest[di++] = codePoint;
+        } else if (codePoint < 0x7FF) { // Two bytes
+            if (di + 1 >= destLimit) break;
+            dest[di++] = 0xC0 + (codePoint >> 6);
+            dest[di++] = 0x80 + (codePoint & 0x3F);
+        } else if (codePoint < 0xFFFF) { // Three bytes
+            if (di + 2 >= destLimit) break;
+            dest[di++] = 0xE0 + (codePoint >> 12);
+            dest[di++] = 0x80 + ((codePoint >> 6) & 0x3F);
+            dest[di++] = 0x80 + (codePoint & 0x3F);
+        } else if (codePoint <= 0x1FFFFF) { // Four bytes
+            if (di + 3 >= destLimit) break;
+            dest[di++] = 0xF0 + (codePoint >> 18);
+            dest[di++] = 0x80 + ((codePoint >> 12) & 0x3F);
+            dest[di++] = 0x80 + ((codePoint >> 6) & 0x3F);
+            dest[di++] = 0x80 + (codePoint & 0x3F);
+        } else if (codePoint <= 0x3FFFFFF) { // Five bytes
+            if (di + 4 >= destLimit) break;
+            dest[di++] = 0xF8 + (codePoint >> 24);
+            dest[di++] = 0x80 + ((codePoint >> 18) & 0x3F);
+            dest[di++] = 0x80 + ((codePoint >> 12) & 0x3F);
+            dest[di++] = 0x80 + ((codePoint >> 6) & 0x3F);
+            dest[di++] = codePoint & 0x3F;
+        } else if (codePoint <= 0x7FFFFFFF) { // Six bytes
+            if (di + 5 >= destLimit) break;
+            dest[di++] = 0xFC + (codePoint >> 30);
+            dest[di++] = 0x80 + ((codePoint >> 24) & 0x3F);
+            dest[di++] = 0x80 + ((codePoint >> 18) & 0x3F);
+            dest[di++] = 0x80 + ((codePoint >> 12) & 0x3F);
+            dest[di++] = 0x80 + ((codePoint >> 6) & 0x3F);
+            dest[di++] = codePoint & 0x3F;
+        } else {
+            // Not a code point... skip.
+        }
+    }
+    dest[di] = 0;
+    return di;
+}
 
 #if defined(FLAG_DO_PROFILE) || defined(FLAG_DBG)
 #include <android/log.h>
@@ -46,35 +96,13 @@
 
 #define DUMP_RESULT(words, frequencies) do { dumpResult(words, frequencies); } while (0)
 #define DUMP_WORD(word, length) do { dumpWord(word, length); } while (0)
-#define INTS_TO_CHARS(input, length, output) do { \
-        intArrayToCharArray(input, length, output); } while (0)
-
-// TODO: Support full UTF-8 conversion
-AK_FORCE_INLINE static int intArrayToCharArray(const int *source, const int sourceSize,
-        char *dest) {
-    int si = 0;
-    int di = 0;
-    while (si < sourceSize && di < MAX_WORD_LENGTH - 1 && 0 != source[si]) {
-        const int codePoint = source[si++];
-        if (codePoint < 0x7F) {
-            dest[di++] = codePoint;
-        } else if (codePoint < 0x7FF) {
-            dest[di++] = 0xC0 + (codePoint >> 6);
-            dest[di++] = 0x80 + (codePoint & 0x3F);
-        } else if (codePoint < 0xFFFF) {
-            dest[di++] = 0xE0 + (codePoint >> 12);
-            dest[di++] = 0x80 + ((codePoint & 0xFC0) >> 6);
-            dest[di++] = 0x80 + (codePoint & 0x3F);
-        }
-    }
-    dest[di] = 0;
-    return di;
-}
+#define INTS_TO_CHARS(input, length, output, outlength) do { \
+        intArrayToCharArray(input, length, output, outlength); } while (0)
 
 static inline void dumpWordInfo(const int *word, const int length, const int rank,
         const int probability) {
     static char charBuf[50];
-    const int N = intArrayToCharArray(word, length, charBuf);
+    const int N = intArrayToCharArray(word, length, charBuf, NELEMS(charBuf));
     if (N > 1) {
         AKLOGI("%2d [ %s ] (%d)", rank, charBuf, probability);
     }
@@ -90,7 +118,7 @@ static inline void dumpResult(const int *outWords, const int *frequencies) {
 
 static AK_FORCE_INLINE void dumpWord(const int *word, const int length) {
     static char charBuf[50];
-    const int N = intArrayToCharArray(word, length, charBuf);
+    const int N = intArrayToCharArray(word, length, charBuf, NELEMS(charBuf));
     if (N > 1) {
         AKLOGI("[ %s ]", charBuf);
     }
@@ -203,14 +231,12 @@ static inline void prof_out(void) {
 #define DEBUG_DICT true
 #define DEBUG_DICT_FULL false
 #define DEBUG_EDIT_DISTANCE false
-#define DEBUG_SHOW_FOUND_WORD false
 #define DEBUG_NODE DEBUG_DICT_FULL
 #define DEBUG_TRACE DEBUG_DICT_FULL
 #define DEBUG_PROXIMITY_INFO false
 #define DEBUG_PROXIMITY_CHARS false
 #define DEBUG_CORRECTION false
 #define DEBUG_CORRECTION_FREQ false
-#define DEBUG_WORDS_PRIORITY_QUEUE false
 #define DEBUG_SAMPLING_POINTS false
 #define DEBUG_POINTS_PROBABILITY false
 #define DEBUG_DOUBLE_LETTER false
@@ -229,14 +255,12 @@ static inline void prof_out(void) {
 #define DEBUG_DICT false
 #define DEBUG_DICT_FULL false
 #define DEBUG_EDIT_DISTANCE false
-#define DEBUG_SHOW_FOUND_WORD false
 #define DEBUG_NODE false
 #define DEBUG_TRACE false
 #define DEBUG_PROXIMITY_INFO false
 #define DEBUG_PROXIMITY_CHARS false
 #define DEBUG_CORRECTION false
 #define DEBUG_CORRECTION_FREQ false
-#define DEBUG_WORDS_PRIORITY_QUEUE false
 #define DEBUG_SAMPLING_POINTS false
 #define DEBUG_POINTS_PROBABILITY false
 #define DEBUG_DOUBLE_LETTER false
@@ -268,81 +292,36 @@ static inline void prof_out(void) {
 // of the binary dictionary where a {key,value} string pair scheme is used.
 #define LARGEST_INT_DIGIT_COUNT 11
 
-// Define this to use mmap() for dictionary loading.  Undefine to use malloc() instead of mmap().
-// We measured and compared performance of both, and found mmap() is fairly good in terms of
-// loading time, and acceptable even for several initial lookups which involve page faults.
-#define USE_MMAP_FOR_DICTIONARY
-
-#define NOT_VALID_WORD (-99)
 #define NOT_A_CODE_POINT (-1)
 #define NOT_A_DISTANCE (-1)
 #define NOT_A_COORDINATE (-1)
-#define MATCH_CHAR_WITHOUT_DISTANCE_INFO (-2)
-#define PROXIMITY_CHAR_WITHOUT_DISTANCE_INFO (-3)
-#define ADDITIONAL_PROXIMITY_CHAR_DISTANCE_INFO (-4)
 #define NOT_AN_INDEX (-1)
 #define NOT_A_PROBABILITY (-1)
+#define NOT_A_DICT_POS (S_INT_MIN)
+
+// A special value to mean the first word confidence makes no sense in this case,
+// e.g. this is not a multi-word suggestion.
+#define NOT_A_FIRST_WORD_CONFIDENCE (S_INT_MAX)
+// How high the confidence needs to be for us to auto-commit. Arbitrary.
+// This needs to be the same as CONFIDENCE_FOR_AUTO_COMMIT in BinaryDictionary.java
+#define CONFIDENCE_FOR_AUTO_COMMIT (1000000)
+// 80% of the full confidence
+#define DISTANCE_WEIGHT_FOR_AUTO_COMMIT (80 * CONFIDENCE_FOR_AUTO_COMMIT / 100)
+// 100% of the full confidence
+#define LENGTH_WEIGHT_FOR_AUTO_COMMIT (CONFIDENCE_FOR_AUTO_COMMIT)
+// 80% of the full confidence
+#define SPACE_COUNT_WEIGHT_FOR_AUTO_COMMIT (80 * CONFIDENCE_FOR_AUTO_COMMIT / 100)
 
 #define KEYCODE_SPACE ' '
 #define KEYCODE_SINGLE_QUOTE '\''
 #define KEYCODE_HYPHEN_MINUS '-'
 
-#define CALIBRATE_SCORE_BY_TOUCH_COORDINATES true
-#define SUGGEST_MULTIPLE_WORDS true
-#define USE_SUGGEST_INTERFACE_FOR_TYPING true
 #define SUGGEST_INTERFACE_OUTPUT_SCALE 1000000.0f
-
-// The following "rate"s are used as a multiplier before dividing by 100, so they are in percent.
-#define WORDS_WITH_MISSING_CHARACTER_DEMOTION_RATE 80
-#define WORDS_WITH_MISSING_CHARACTER_DEMOTION_START_POS_10X 12
-#define WORDS_WITH_MISSING_SPACE_CHARACTER_DEMOTION_RATE 58
-#define WORDS_WITH_MISTYPED_SPACE_DEMOTION_RATE 50
-#define WORDS_WITH_EXCESSIVE_CHARACTER_DEMOTION_RATE 75
-#define WORDS_WITH_EXCESSIVE_CHARACTER_OUT_OF_PROXIMITY_DEMOTION_RATE 75
-#define WORDS_WITH_TRANSPOSED_CHARACTERS_DEMOTION_RATE 70
-#define FULL_MATCHED_WORDS_PROMOTION_RATE 120
-#define WORDS_WITH_PROXIMITY_CHARACTER_DEMOTION_RATE 90
-#define WORDS_WITH_ADDITIONAL_PROXIMITY_CHARACTER_DEMOTION_RATE 70
-#define WORDS_WITH_MATCH_SKIP_PROMOTION_RATE 105
-#define WORDS_WITH_JUST_ONE_CORRECTION_PROMOTION_RATE 148
-#define WORDS_WITH_JUST_ONE_CORRECTION_PROMOTION_MULTIPLIER 3
-#define CORRECTION_COUNT_RATE_DEMOTION_RATE_BASE 45
-#define INPUT_EXCEEDS_OUTPUT_DEMOTION_RATE 70
-#define FIRST_CHAR_DIFFERENT_DEMOTION_RATE 96
-#define TWO_WORDS_CAPITALIZED_DEMOTION_RATE 50
-#define TWO_WORDS_CORRECTION_DEMOTION_BASE 80
-#define TWO_WORDS_PLUS_OTHER_ERROR_CORRECTION_DEMOTION_DIVIDER 1
-#define ZERO_DISTANCE_PROMOTION_RATE 110.0f
-#define NEUTRAL_SCORE_SQUARED_RADIUS 8.0f
-#define HALF_SCORE_SQUARED_RADIUS 32.0f
 #define MAX_PROBABILITY 255
 #define MAX_BIGRAM_ENCODED_PROBABILITY 15
 
 // Assuming locale strings such as en_US, sr-Latn etc.
 #define MAX_LOCALE_STRING_LENGTH 10
-
-// Word limit for sub queues used in WordsPriorityQueuePool.  Sub queues are temporary queues used
-// for better performance.
-// Holds up to 1 candidate for each word
-#define SUB_QUEUE_MAX_WORDS 1
-#define SUB_QUEUE_MAX_COUNT 10
-#define SUB_QUEUE_MIN_WORD_LENGTH 4
-// TODO: Extend this limitation
-#define MULTIPLE_WORDS_SUGGESTION_MAX_WORDS 5
-// TODO: Remove this limitation
-#define MULTIPLE_WORDS_SUGGESTION_MAX_WORD_LENGTH 12
-// TODO: Remove this limitation
-#define MULTIPLE_WORDS_SUGGESTION_MAX_TOTAL_TRAVERSE_COUNT 45
-#define MULTIPLE_WORDS_DEMOTION_RATE 80
-#define MIN_INPUT_LENGTH_FOR_THREE_OR_MORE_WORDS_CORRECTION 6
-
-#define TWO_WORDS_CORRECTION_WITH_OTHER_ERROR_THRESHOLD 0.35f
-#define START_TWO_WORDS_CORRECTION_THRESHOLD 0.185f
-/* heuristic... This should be changed if we change the unit of the probability. */
-#define SUPPRESS_SHORT_MULTIPLE_WORDS_THRESHOLD_FREQ (MAX_PROBABILITY * 58 / 100)
-
-#define MAX_DEPTH_MULTIPLIER 3
-#define FIRST_WORD_INDEX 0
 
 // Max value for length, distance and probability which are used in weighting
 // TODO: Remove
@@ -351,47 +330,12 @@ static inline void prof_out(void) {
 // The max number of the keys in one keyboard layout
 #define MAX_KEY_COUNT_IN_A_KEYBOARD 64
 
-// TODO: Reduce this constant if possible; check the maximum number of digraphs in the same
-// word in the dictionary for languages with digraphs, like German and French
-#define DEFAULT_MAX_DIGRAPH_SEARCH_DEPTH 5
-
-#define MIN_USER_TYPED_LENGTH_FOR_MULTIPLE_WORD_SUGGESTION 3
-
 // TODO: Remove
 #define MAX_POINTER_COUNT 1
 #define MAX_POINTER_COUNT_G 2
 
-// Size, in bytes, of the bloom filter index for bigrams
-// 128 gives us 1024 buckets. The probability of false positive is (1 - e ** (-kn/m))**k,
-// where k is the number of hash functions, n the number of bigrams, and m the number of
-// bits we can test.
-// At the moment 100 is the maximum number of bigrams for a word with the current
-// dictionaries, so n = 100. 1024 buckets give us m = 1024.
-// With 1 hash function, our false positive rate is about 9.3%, which should be enough for
-// our uses since we are only using this to increase average performance. For the record,
-// k = 2 gives 3.1% and k = 3 gives 1.6%. With k = 1, making m = 2048 gives 4.8%,
-// and m = 4096 gives 2.4%.
-#define BIGRAM_FILTER_BYTE_SIZE 128
-// Must be smaller than BIGRAM_FILTER_BYTE_SIZE * 8, and preferably prime. 1021 is the largest
-// prime under 128 * 8.
-#define BIGRAM_FILTER_MODULO 1021
-#if BIGRAM_FILTER_BYTE_SIZE * 8 < BIGRAM_FILTER_MODULO
-#error "BIGRAM_FILTER_MODULO is larger than BIGRAM_FILTER_BYTE_SIZE"
-#endif
-
-// Max number of bigram maps (previous word contexts) to be cached. Increasing this number could
-// improve bigram lookup speed for multi-word suggestions, but at the cost of more memory usage.
-// Also, there are diminishing returns since the most frequently used bigrams are typically near
-// the beginning of the input and are thus the first ones to be cached. Note that these bigrams
-// are reset for each new composing word.
-#define MAX_CACHED_PREV_WORDS_IN_BIGRAM_MAP 25
-// Most common previous word contexts currently have 100 bigrams
-#define DEFAULT_HASH_MAP_SIZE_FOR_EACH_BIGRAM_MAP 100
-
 template<typename T> AK_FORCE_INLINE const T &min(const T &a, const T &b) { return a < b ? a : b; }
 template<typename T> AK_FORCE_INLINE const T &max(const T &a, const T &b) { return a > b ? a : b; }
-
-#define NELEMS(x) (sizeof(x) / sizeof((x)[0]))
 
 // DEBUG
 #define INPUTLENGTH_FOR_DEBUG (-1)
@@ -442,8 +386,9 @@ typedef enum {
     CT_TRANSPOSITION,
     CT_COMPLETION,
     CT_TERMINAL,
+    CT_TERMINAL_INSERTION,
     // Create new word with space omission
-    CT_NEW_WORD_SPACE_OMITTION,
+    CT_NEW_WORD_SPACE_OMISSION,
     // Create new word with space substitution
     CT_NEW_WORD_SPACE_SUBSTITUTION,
 } CorrectionType;
